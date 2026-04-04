@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Unsandbox the app - required for file system access to convert debs -->
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+
+	<!-- Allow running unsigned/ad-hoc code (for tar/dpkg execution) -->
+	<key>com.apple.private.security.no-container</key>
+	<true/>
+
+	<!-- Process execution (needed for tar commands in deb conversion) -->
+	<key>com.apple.private.persona-mgmt</key>
+	<true/>
+
+	<!-- File provider access -->
+	<key>com.apple.developer.fileprovider.testing-mode</key>
+	<true/>
+
+	<!-- Allow spawning processes -->
+	<key>com.apple.private.security.storage.AppBundles</key>
+	<true/>
+
+	<!-- Platform binary flag for Process() usage -->
+	<key>platform-application</key>
+	<true/>
+
+	<!-- Container access -->
+	<key>com.apple.private.security.storage.AppDataContainers</key>
+	<true/>
+
+	<!-- Network client -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,80 @@
+/* Navigation */
+"browse" = "Browse";
+"downloads" = "Downloads";
+"settings" = "Settings";
+
+/* Search */
+"search" = "Search packages...";
+"search_btn" = "Search";
+"searching" = "Searching...";
+"search_results" = "Search Results";
+"no_results" = "No results found. Try a different search term.";
+"start_search" = "Search for .deb Packages";
+"start_search_sub" = "Find tweaks, apps, and tools from iOS repos";
+
+/* Repos */
+"repos" = "Repositories";
+"add_repo" = "Add Repo";
+"repo_url" = "Repository URL";
+"add_repo_hint" = "Enter a Cydia/Sileo compatible repository URL";
+"add" = "Add";
+"cancel" = "Cancel";
+"remove" = "Remove";
+"browse_repo" = "Browse";
+"packages" = "packages";
+"repo_packages" = "Repository Packages";
+"loading" = "Loading...";
+
+/* Download */
+"download" = "Download";
+"downloading" = "Downloading...";
+"downloaded_success" = "downloaded successfully";
+"download_failed" = "Download failed";
+"already_downloaded" = "Already downloaded";
+
+/* Downloads Tab */
+"managed_debs" = "Managed Packages";
+"no_downloads" = "No Downloaded Packages";
+"no_downloads_sub" = "Downloaded .deb files will appear here";
+
+/* Actions */
+"save" = "Save";
+"share" = "Share";
+"convert" = "Convert";
+"delete" = "Delete";
+"deleted" = "Deleted";
+"saved_to" = "Saved to Files";
+"shared_via" = "Share sheet opened";
+
+/* Convert */
+"convert_to" = "Convert To";
+"current_arch" = "Current";
+"target_arch" = "Target";
+"converting" = "Converting...";
+"converted" = "Converted!";
+"converted_to" = "converted to";
+"conversion_failed" = "Conversion failed";
+
+/* Settings */
+"about" = "About";
+"developer" = "Developer";
+"follow_twitter" = "Follow on 𝕏";
+"language" = "Language";
+"language_auto" = "Follows device language";
+"supported_languages" = "Supported Languages";
+"version" = "Version 1.0.0";
+"app_name" = "App Name";
+"app_desc" = "iOS .deb Package Manager";
+"supported_arch" = "Supported Architectures";
+"trollstore_compatible" = "TrollStore Compatible";
+
+/* General */
+"back" = "Back";
+"confirm_delete" = "Delete this package?";
+"yes" = "Yes";
+"no" = "No";
+"no_repos" = "No Repositories";
+"no_repos_sub" = "Add a repo to start browsing and downloading .deb packages";
+"select" = "Select";
+"done" = "Done";
+"packages_converted" = "packages converted";

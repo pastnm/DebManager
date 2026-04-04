@@ -1,0 +1,80 @@
+/* Navigation */
+"browse" = "تصفح";
+"downloads" = "التنزيلات";
+"settings" = "الإعدادات";
+
+/* Search */
+"search" = "ابحث عن الحزم...";
+"search_btn" = "بحث";
+"searching" = "جارٍ البحث...";
+"search_results" = "نتائج البحث";
+"no_results" = "لم يتم العثور على نتائج. جرّب مصطلح بحث مختلف.";
+"start_search" = "ابحث عن حزم .deb";
+"start_search_sub" = "ابحث عن التعديلات والتطبيقات والأدوات من مستودعات iOS";
+
+/* Repos */
+"repos" = "المستودعات";
+"add_repo" = "إضافة مستودع";
+"repo_url" = "رابط المستودع";
+"add_repo_hint" = "أدخل رابط مستودع متوافق مع Cydia/Sileo";
+"add" = "إضافة";
+"cancel" = "إلغاء";
+"remove" = "إزالة";
+"browse_repo" = "تصفح";
+"packages" = "حزم";
+"repo_packages" = "حزم المستودع";
+"loading" = "جارٍ التحميل...";
+
+/* Download */
+"download" = "تنزيل";
+"downloading" = "جارٍ التنزيل...";
+"downloaded_success" = "تم التنزيل بنجاح";
+"download_failed" = "فشل التنزيل";
+"already_downloaded" = "تم التنزيل مسبقاً";
+
+/* Downloads Tab */
+"managed_debs" = "الحزم المُدارة";
+"no_downloads" = "لا توجد حزم محمّلة";
+"no_downloads_sub" = "ستظهر ملفات .deb المحمّلة هنا";
+
+/* Actions */
+"save" = "حفظ";
+"share" = "مشاركة";
+"convert" = "تحويل";
+"delete" = "حذف";
+"deleted" = "تم الحذف";
+"saved_to" = "تم الحفظ في الملفات";
+"shared_via" = "تم فتح ورقة المشاركة";
+
+/* Convert */
+"convert_to" = "تحويل إلى";
+"current_arch" = "الحالية";
+"target_arch" = "الهدف";
+"converting" = "جارٍ التحويل...";
+"converted" = "تم التحويل!";
+"converted_to" = "تم التحويل إلى";
+"conversion_failed" = "فشل التحويل";
+
+/* Settings */
+"about" = "حول";
+"developer" = "المطوّر";
+"follow_twitter" = "تابع على 𝕏";
+"language" = "اللغة";
+"language_auto" = "تتبع لغة الجهاز";
+"supported_languages" = "اللغات المدعومة";
+"version" = "الإصدار 1.0.0";
+"app_name" = "اسم التطبيق";
+"app_desc" = "مدير حزم .deb لنظام iOS";
+"supported_arch" = "المعماريات المدعومة";
+"trollstore_compatible" = "متوافق مع TrollStore";
+
+/* General */
+"back" = "رجوع";
+"confirm_delete" = "حذف هذه الحزمة؟";
+"yes" = "نعم";
+"no" = "لا";
+"no_repos" = "لا توجد مستودعات";
+"no_repos_sub" = "أضف مستودعاً للبدء في تصفح وتنزيل حزم .deb";
+"select" = "تحديد";
+"done" = "تم";
+"packages_converted" = "حزم تم تحويلها";
