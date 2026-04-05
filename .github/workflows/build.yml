@@ -1,4 +1,4 @@
-name: Build DebManager Dynamic Fix
+name: Build DebManager Dynamic Robust
 on:
   workflow_dispatch:
 
@@ -17,42 +17,66 @@ jobs:
           mkdir -p ios_bins
           cd ios_bins
           
-          # 下载并解压软件源索引文件 (Packages)
+          # 动态尝试不同的索引文件路径和压缩格式
           echo "正在获取软件源最新索引..."
-          curl -sL "https://apt.procurs.us/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm/Packages.xz" | xz -d > Packages
           
-          # 自动解析当前最新的软件包路径
-          get_path() {
-            grep -A 20 "Package: $1$" Packages | grep "Filename: " | head -n 1 | cut -d' ' -f2
+          # 尝试多个可能的索引地址
+          fetch_packages() {
+            local base_url=$1
+            echo "尝试从 $base_url 获取索引..."
+            curl -sfL "$base_url/Packages.xz" -o Packages.xz && xz -d Packages.xz && return 0
+            curl -sfL "$base_url/Packages.gz" -o Packages.gz && gunzip Packages.gz && return 0
+            curl -sfL "$base_url/Packages" -o Packages && return 0
+            return 1
           }
 
+          # 依次尝试官方源和镜像源
+          fetch_packages "https://apt.procurs.us/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm" || \
+          fetch_packages "https://strap.palera.in/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm" || \
+          fetch_packages "https://apt.procurs.us/dists/iphoneos-arm64/main/binary-iphoneos-arm"
+
+          if [ ! -f Packages ]; then
+            echo "❌ 严重错误：所有索引文件获取均失败！"
+            exit 1
+          fi
+
+          # 自动解析当前最新的软件包路径
+          get_path() {
+            grep -A 25 "Package: $1$" Packages | grep "Filename: " | head -n 1 | cut -d' ' -f2
+          }
+
+          # 构造完整的下载链接
           DPKG_URL="https://apt.procurs.us/$(get_path 'dpkg')"
           ZSTD_URL="https://apt.procurs.us/$(get_path 'zstd')"
           LIBZSTD_URL="https://apt.procurs.us/$(get_path 'libzstd1')"
           LIBLZMA_URL="https://apt.procurs.us/$(get_path 'liblzma5')"
 
-          echo "解析到下载地址:"
+          echo "解析到组件地址:"
           echo "DPKG: $DPKG_URL"
           echo "ZSTD: $ZSTD_URL"
 
           # 执行下载
-          curl -fLO "$DPKG_URL"
-          curl -fLO "$ZSTD_URL"
-          curl -fLO "$LIBZSTD_URL"
-          curl -fLO "$LIBLZMA_URL"
+          curl -fLO "$DPKG_URL" || curl -fLO "https://strap.palera.in/$(get_path 'dpkg')"
+          curl -fLO "$ZSTD_URL" || curl -fLO "https://strap.palera.in/$(get_path 'zstd')"
+          curl -fLO "$LIBZSTD_URL" || curl -fLO "https://strap.palera.in/$(get_path 'libzstd1')"
+          curl -fLO "$LIBLZMA_URL" || curl -fLO "https://strap.palera.in/$(get_path 'liblzma5')"
 
           # 解压所有 deb 包
           for f in *.deb; do ar x "$f" && tar -xf data.tar.*; done
           
-          # 提取组件
-          cp usr/bin/dpkg-deb ../
-          cp usr/bin/zstd ../
-          cp usr/lib/libzstd.1.dylib ../
-          cp usr/lib/liblzma.5.dylib ../
+          # 提取需要的二进制文件和动态库
+          find . -name "dpkg-deb" -type f -exec cp {} ../ \;
+          find . -name "zstd" -type f -exec cp {} ../ \;
+          find . -name "libzstd.1.dylib" -type f -exec cp {} ../ \;
+          find . -name "liblzma.5.dylib" -type f -exec cp {} ../ \;
           cd ..
+          
+          # 验证文件是否存在
+          ls -l dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib
 
       - name: Inject Chinese Localization
         run: |
+          # 汉化代码注入
           cat << 'EOF' > /tmp/zh.strings
           "about"="关于";
           "add"="添加";
@@ -129,10 +153,10 @@ jobs:
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
           cp dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib Payload/DebManager.app/
-          zip -r9 DebManager_ZH_Ultimate.tipa Payload
+          zip -r9 DebManager_Fixed_Final.tipa Payload
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-ZH-Ultimate
-          path: DebManager_ZH_Ultimate.tipa
+          name: DebManager-Fixed-Final
+          path: DebManager_Fixed_Final.tipa
