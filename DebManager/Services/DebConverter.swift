@@ -88,7 +88,7 @@ class DebConverter {
         let newCtrlGz = makeStoredGzip(newCtrlTar)
 
         // Try to decompress and modify data tar for path remapping
-        let needsPathRemap = (from == .rootful && to != .rootful) || (from != .rootful && to == .rootful)
+        let needsPathRemap = usesRootlessPrefix(from) != usesRootlessPrefix(to)
         var finalDataName = data.name
         var finalDataContent = data.data
 
@@ -163,7 +163,7 @@ class DebConverter {
         var prefix = ""
         if p.hasPrefix("./") { prefix = "./"; p = String(p.dropFirst(2)) }
 
-        if from == .rootful && (to == .rootless || to == .roothide) {
+        if !usesRootlessPrefix(from) && usesRootlessPrefix(to) {
             if p.hasPrefix("Library/MobileSubstrate/DynamicLibraries/") {
                 let remainder = String(p.dropFirst("Library/MobileSubstrate/DynamicLibraries/".count))
                 return prefix + "var/jb/usr/lib/TweakInject/" + remainder
@@ -181,7 +181,7 @@ class DebConverter {
                     return prefix + "var/jb/" + p
                 }
             }
-        } else if (from == .rootless || from == .roothide) && to == .rootful {
+        } else if usesRootlessPrefix(from) && !usesRootlessPrefix(to) {
             guard p.hasPrefix("var/jb/") else { return path }
             let stripped = String(p.dropFirst("var/jb/".count))
             if stripped.hasPrefix("usr/lib/TweakInject/") {
@@ -198,11 +198,11 @@ class DebConverter {
 
     private func mapLinkTarget(_ target: String, from: ArchType, to: ArchType) -> String {
         guard target.hasPrefix("/") else { return target }
-        if from == .rootful && (to == .rootless || to == .roothide) {
+        if !usesRootlessPrefix(from) && usesRootlessPrefix(to) {
             if !target.hasPrefix("/var/jb") {
                 return "/var/jb" + target
             }
-        } else if (from == .rootless || from == .roothide) && to == .rootful {
+        } else if usesRootlessPrefix(from) && !usesRootlessPrefix(to) {
             if target.hasPrefix("/var/jb/") {
                 return String(target.dropFirst("/var/jb".count))
             }
@@ -343,7 +343,7 @@ class DebConverter {
 
     private func performDiskPathMapping(in dir: URL, from: ArchType, to: ArchType) throws {
         switch (from, to) {
-        case (.rootful, .rootless), (.rootful, .roothide):
+        case (.rootful, .rootless), (.roothide, .rootless):
             let jb = dir.appendingPathComponent("var/jb")
             try fm.createDirectory(at: jb, withIntermediateDirectories: true)
             let ms = dir.appendingPathComponent("Library/MobileSubstrate/DynamicLibraries")
@@ -361,7 +361,7 @@ class DebConverter {
                 if fm.fileExists(atPath: dst.path) { try mergeDir(s, dst); try? fm.removeItem(at: s) }
                 else { try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true); try fm.moveItem(at: s, to: dst) }
             }
-        case (.rootless, .rootful), (.roothide, .rootful):
+        case (.rootless, .rootful), (.rootless, .roothide):
             let jb = dir.appendingPathComponent("var/jb")
             guard fm.fileExists(atPath: jb.path) else { break }
             let ti = jb.appendingPathComponent("usr/lib/TweakInject")
@@ -730,13 +730,13 @@ class DebConverter {
             let f = deb.appendingPathComponent(s)
             guard fm.fileExists(atPath: f.path), var c = try? String(contentsOf: f, encoding: .utf8) else { continue }
             c = c.replacingOccurrences(of: from.archString, with: to.archString)
-            if from == .rootful && (to == .rootless || to == .roothide) {
+            if !usesRootlessPrefix(from) && usesRootlessPrefix(to) {
                 c = c.replacingOccurrences(of: "/var/jb/", with: "/-vj/-"); c = c.replacingOccurrences(of: "/var/jb", with: "/-vj-")
                 for p in ["/Applications/","/Library/","/private/","/System/","/sbin/","/bin/","/etc/","/usr/"] {
                     c = c.replacingOccurrences(of: " \(p)", with: " /var/jb\(p)") }
                 c = c.replacingOccurrences(of: "/-vj/-", with: "/var/jb/"); c = c.replacingOccurrences(of: "/-vj-", with: "/var/jb")
                 if c.hasPrefix("#!/var/jb/") { c = "#!/" + String(c.dropFirst("#!/var/jb/".count)) }
-            } else if (from == .rootless || from == .roothide) && to == .rootful {
+            } else if usesRootlessPrefix(from) && !usesRootlessPrefix(to) {
                 c = c.replacingOccurrences(of: "/var/jb/", with: "/"); c = c.replacingOccurrences(of: "/var/jb", with: "") }
             try c.write(to: f, atomically: true, encoding: .utf8); chmodP(f, r: false, m: "755") } }
 
@@ -749,6 +749,10 @@ class DebConverter {
             } else { if fm.fileExists(atPath: di.path) { try fm.removeItem(at: di) }; try fm.moveItem(at: i, to: di) } } }
 
     private func isDirEmpty(_ u: URL) -> Bool { (try? fm.contentsOfDirectory(atPath: u.path))?.isEmpty ?? true }
+
+    private func usesRootlessPrefix(_ arch: ArchType) -> Bool {
+        arch == .rootless
+    }
 
     private func preflightCompatibilityCheck(sourceData: Data, from: ArchType, to: ArchType) throws {
         guard from == .roothide && to == .rootless else { return }
