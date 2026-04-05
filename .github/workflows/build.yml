@@ -1,4 +1,4 @@
-name: Build DebManager Ultimate Robust V3
+name: Build DebManager Dynamic Fix
 on:
   workflow_dispatch:
 
@@ -12,77 +12,47 @@ jobs:
       - name: Unzip Project
         run: unzip DebManager.xcodeproj.zip
 
-      - name: Download and Extract iOS Binaries
+      - name: Dynamic Download iOS Binaries
         run: |
           mkdir -p ios_bins
           cd ios_bins
           
-          # 定义多个稳定的镜像源和可能的目录结构
-          MIRRORS=(
-            "https://apt.procurs.us/pool/main/iphoneos-arm64/1900"
-            "https://strap.palera.in/pool/main/iphoneos-arm64/1900"
-            "https://apt.procurs.us/pool/main/z"
-            "https://apt.procurs.us/pool/main/x"
-            "https://apt.procurs.us/pool/main/d"
-          )
-
-          # 增强型下载函数：尝试多种路径、版本和镜像
-          smart_download() {
-            local pkg_name=$1
-            local pkg_folder=$2
-            local versions=("1.5.7" "1.5.6" "1.22.11" "1.22.6" "5.6.3" "5.6.1" "5.4.5")
-            
-            echo "正在寻找软件包: $pkg_name ..."
-            
-            for url in "${MIRRORS[@]}"; do
-              for ver in "${versions[@]}"; do
-                # 尝试两种常见的路径格式：
-                # 1. 之前用的直接路径格式
-                # 2. 标准的 Debian 字母分类路径格式 (如 /z/zstd/...)
-                local paths=(
-                  "${url}/${pkg_folder}/${pkg_name}_${ver}_iphoneos-arm.deb"
-                  "${url}/${pkg_name}/${pkg_name}_${ver}_iphoneos-arm.deb"
-                )
-                
-                for full_url in "${paths[@]}"; do
-                  echo "尝试链接: $full_url"
-                  if curl -fL --connect-timeout 5 -O "$full_url"; then
-                    echo "✅ 成功下载 $pkg_name (版本 $ver)"
-                    return 0
-                  fi
-                done
-              done
-            done
-            echo "❌ 错误：无法找到 $pkg_name 的有效下载链接"
-            return 1
+          # 下载并解压软件源索引文件 (Packages)
+          echo "正在获取软件源最新索引..."
+          curl -sL "https://apt.procurs.us/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm/Packages.xz" | xz -d > Packages
+          
+          # 自动解析当前最新的软件包路径
+          get_path() {
+            grep -A 20 "Package: $1$" Packages | grep "Filename: " | head -n 1 | cut -d' ' -f2
           }
 
-          # 执行下载任务
-          smart_download "dpkg" "dpkg"
-          smart_download "zstd" "zstd"
-          smart_download "libzstd1" "zstd"
-          smart_download "liblzma5" "xz-utils" || smart_download "liblzma5" "lzma"
+          DPKG_URL="https://apt.procurs.us/$(get_path 'dpkg')"
+          ZSTD_URL="https://apt.procurs.us/$(get_path 'zstd')"
+          LIBZSTD_URL="https://apt.procurs.us/$(get_path 'libzstd1')"
+          LIBLZMA_URL="https://apt.procurs.us/$(get_path 'liblzma5')"
 
-          # 统一解压所有成功下载的 deb 包
-          echo "开始解压文件..."
-          for f in *.deb; do
-            ar x "$f" && tar -xf data.tar.*
-          done
+          echo "解析到下载地址:"
+          echo "DPKG: $DPKG_URL"
+          echo "ZSTD: $ZSTD_URL"
 
-          # 自动搜索并提取二进制文件
-          echo "提取关键组件..."
-          find . -name "dpkg-deb" -type f -exec cp {} ../ \;
-          find . -name "zstd" -type f -exec cp {} ../ \;
-          find . -name "libzstd.1.dylib" -type f -exec cp {} ../ \;
-          find . -name "liblzma.5.dylib" -type f -exec cp {} ../ \;
+          # 执行下载
+          curl -fLO "$DPKG_URL"
+          curl -fLO "$ZSTD_URL"
+          curl -fLO "$LIBZSTD_URL"
+          curl -fLO "$LIBLZMA_URL"
+
+          # 解压所有 deb 包
+          for f in *.deb; do ar x "$f" && tar -xf data.tar.*; done
           
+          # 提取组件
+          cp usr/bin/dpkg-deb ../
+          cp usr/bin/zstd ../
+          cp usr/lib/libzstd.1.dylib ../
+          cp usr/lib/liblzma.5.dylib ../
           cd ..
-          # 验证文件是否就绪
-          ls -l dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib || echo "部分组件缺失"
 
       - name: Inject Chinese Localization
         run: |
-          # 保持汉化注入
           cat << 'EOF' > /tmp/zh.strings
           "about"="关于";
           "add"="添加";
@@ -154,16 +124,15 @@ jobs:
         run: |
           xcodebuild clean build -project DebManager.xcodeproj -scheme DebManager -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS"
 
-      - name: Package with Binaries
+      - name: Package
         run: |
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
-          # 确保关键二进制文件被正确打包
           cp dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib Payload/DebManager.app/
-          zip -r9 DebManager_Fixed_V3.tipa Payload
+          zip -r9 DebManager_ZH_Ultimate.tipa Payload
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-Fixed-V3
-          path: DebManager_Fixed_V3.tipa
+          name: DebManager-ZH-Ultimate
+          path: DebManager_ZH_Ultimate.tipa
