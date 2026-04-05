@@ -1,7 +1,14 @@
 import Foundation
 import Compression
+import Darwin
 
 class DebConverter {
+    private typealias ZSTDGetFrameContentSizeFn = @convention(c) (UnsafeRawPointer?, Int) -> UInt64
+    private typealias ZSTDDecompressBoundFn = @convention(c) (UnsafeRawPointer?, Int) -> UInt64
+    private typealias ZSTDDecompressFn = @convention(c) (UnsafeMutableRawPointer?, Int, UnsafeRawPointer?, Int) -> Int
+    private typealias ZSTDIsErrorFn = @convention(c) (Int) -> UInt32
+    private typealias ZSTDGetErrorNameFn = @convention(c) (Int) -> UnsafePointer<CChar>?
+
     static let shared = DebConverter()
     private let fm = FileManager.default
     private init() {}
@@ -411,22 +418,78 @@ class DebConverter {
     }
 
     private func zstdDecompress(_ data: Data) throws -> Data {
-        guard let zstd = findBin("zstd") else {
-            throw ConversionError.conversionFailed("zstd not supported without helper binary")
+        if let zstd = findBin("zstd") {
+            let tmp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let input = tmp.appendingPathComponent("input.zst")
+            let output = tmp.appendingPathComponent("output.tar")
+            try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: tmp) }
+
+            try data.write(to: input)
+            if spawn(zstd, ["-q", "-d", "-f", input.path, "-o", output.path]),
+               fm.fileExists(atPath: output.path) {
+                return try Data(contentsOf: output)
+            }
         }
 
-        let tmp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let input = tmp.appendingPathComponent("input.zst")
-        let output = tmp.appendingPathComponent("output.tar")
-        try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tmp) }
-
-        try data.write(to: input)
-        guard spawn(zstd, ["-q", "-d", "-f", input.path, "-o", output.path]),
-              fm.fileExists(atPath: output.path) else {
-            throw ConversionError.conversionFailed("zstd decompression failed")
+        if let libzstd = findLibrary(prefix: "libzstd") {
+            return try zstdDecompressWithLibrary(data, libraryPath: libzstd)
         }
-        return try Data(contentsOf: output)
+
+        throw ConversionError.conversionFailed("zstd not supported without helper binary")
+    }
+
+    private func zstdDecompressWithLibrary(_ data: Data, libraryPath: String) throws -> Data {
+        guard let handle = libraryPath.withCString({ dlopen($0, RTLD_NOW | RTLD_LOCAL) }) else {
+            throw ConversionError.conversionFailed("unable to load libzstd")
+        }
+        defer { dlclose(handle) }
+
+        guard
+            let getFrameContentSizeSym = dlsym(handle, "ZSTD_getFrameContentSize"),
+            let decompressBoundSym = dlsym(handle, "ZSTD_decompressBound"),
+            let decompressSym = dlsym(handle, "ZSTD_decompress"),
+            let isErrorSym = dlsym(handle, "ZSTD_isError"),
+            let getErrorNameSym = dlsym(handle, "ZSTD_getErrorName")
+        else {
+            throw ConversionError.conversionFailed("libzstd symbols unavailable")
+        }
+
+        let getFrameContentSize = unsafeBitCast(getFrameContentSizeSym, to: ZSTDGetFrameContentSizeFn.self)
+        let decompressBound = unsafeBitCast(decompressBoundSym, to: ZSTDDecompressBoundFn.self)
+        let decompress = unsafeBitCast(decompressSym, to: ZSTDDecompressFn.self)
+        let isError = unsafeBitCast(isErrorSym, to: ZSTDIsErrorFn.self)
+        let getErrorName = unsafeBitCast(getErrorNameSym, to: ZSTDGetErrorNameFn.self)
+
+        return try data.withUnsafeBytes { srcBytes in
+            guard let srcBase = srcBytes.baseAddress else {
+                throw ConversionError.conversionFailed("empty zstd payload")
+            }
+
+            let contentSizeUnknown = UInt64.max - 1
+            let contentSizeError = UInt64.max
+            let declaredSize = getFrameContentSize(srcBase, data.count)
+            let capacity64 = declaredSize == contentSizeUnknown ? decompressBound(srcBase, data.count) : declaredSize
+
+            guard declaredSize != contentSizeError,
+                  capacity64 > 0,
+                  capacity64 < UInt64(Int.max) else {
+                throw ConversionError.conversionFailed("invalid zstd frame")
+            }
+
+            var output = Data(count: Int(capacity64))
+            let written = output.withUnsafeMutableBytes { dstBytes -> Int in
+                decompress(dstBytes.baseAddress, dstBytes.count, srcBase, data.count)
+            }
+
+            if isError(written) != 0 {
+                let reason = getErrorName(written).map { String(cString: $0) } ?? "unknown zstd error"
+                throw ConversionError.conversionFailed(reason)
+            }
+
+            output.count = written
+            return output
+        }
     }
 
     private func gunzip(_ data: Data) throws -> Data {
@@ -481,6 +544,33 @@ class DebConverter {
                 return path
             }
         }
+        return nil
+    }
+
+    private func findLibrary(prefix: String) -> String? {
+        let bundlePath = Bundle.main.bundlePath
+        let searchDirs = [
+            bundlePath + "/Helpers",
+            bundlePath + "/Frameworks",
+            bundlePath,
+            "/var/jb/usr/lib",
+            "/usr/lib"
+        ]
+
+        for dir in searchDirs where fm.fileExists(atPath: dir) {
+            if let items = try? fm.contentsOfDirectory(atPath: dir) {
+                if let match = items
+                    .filter({ $0.hasPrefix(prefix) && $0.hasSuffix(".dylib") })
+                    .sorted()
+                    .first {
+                    let path = dir + "/\(match)"
+                    if fm.fileExists(atPath: path) {
+                        return path
+                    }
+                }
+            }
+        }
+
         return nil
     }
 
