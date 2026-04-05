@@ -1,29 +1,53 @@
-name: Build DebManager Ultimate
+name: Build DebManager Ultimate Fixed
 on:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
       - name: Unzip Project
         run: unzip DebManager.xcodeproj.zip
+
       - name: Download iOS Binaries
         run: |
           mkdir -p ios_bins
           cd ios_bins
-          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/dpkg_1.22.11_iphoneos-arm64.deb
-          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/zstd_1.5.6_iphoneos-arm64.deb
-          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/libzstd1_1.5.6_iphoneos-arm64.deb
-          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/liblzma5_5.6.3_iphoneos-arm64.deb
-          for f in *.deb; do ar x $f && tar -xf data.tar.*; done
+          
+          # 定义官方和备用镜像前缀
+          REPO_URL="https://apt.procurs.us"
+          MIRROR_URL="https://strap.palera.in"
+          
+          # 下载 dpkg, zstd 及其依赖库 (针对 iOS 15-16 的 1900 架构)
+          # 注意：Procursus 的 arm64 包文件名后缀通常是 iphoneos-arm.deb
+          curl -fLO "${REPO_URL}/pool/main/iphoneos-arm64/1900/dpkg/dpkg_1.22.6_iphoneos-arm.deb" || \
+          curl -fLO "${MIRROR_URL}/pool/main/iphoneos-arm64/1900/dpkg/dpkg_1.22.6_iphoneos-arm.deb"
+          
+          curl -fLO "${REPO_URL}/pool/main/iphoneos-arm64/1900/zstd/zstd_1.5.6_iphoneos-arm.deb" || \
+          curl -fLO "${MIRROR_URL}/pool/testing/iphoneos-arm64/2000/zstd/zstd_1.5.6_iphoneos-arm.deb"
+          
+          curl -fLO "${REPO_URL}/pool/main/iphoneos-arm64/1900/zstd/libzstd1_1.5.6_iphoneos-arm.deb" || \
+          curl -fLO "${MIRROR_URL}/pool/testing/iphoneos-arm64/2000/zstd/libzstd1_1.5.6_iphoneos-arm.deb"
+          
+          curl -fLO "${REPO_URL}/pool/main/iphoneos-arm64/1900/xz-utils/liblzma5_5.6.3_iphoneos-arm.deb" || \
+          curl -fLO "${MIRROR_URL}/pool/main/iphoneos-arm64/1900/xz-utils/liblzma5_5.6.3_iphoneos-arm.deb"
+          
+          # 解压缩并提取二进制文件
+          for f in *.deb; do ar x "$f" && tar -xf data.tar.*; done
+          
+          # 将提取出的工具移动到上级目录，准备打包
           cp usr/bin/dpkg-deb ../
           cp usr/bin/zstd ../
           cp usr/lib/libzstd.1.dylib ../
           cp usr/lib/liblzma.5.dylib ../
+          cd ..
+
       - name: Inject Chinese Localization
         run: |
+          # 保持汉化逻辑不变
           cat << 'EOF' > /tmp/zh.strings
           "about"="关于";
           "add"="添加";
@@ -90,17 +114,21 @@ jobs:
           "yes"="是";
           EOF
           find . -name "Localizable.strings" -exec cp /tmp/zh.strings {} \;
+
       - name: Build
         run: |
           xcodebuild clean build -project DebManager.xcodeproj -scheme DebManager -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS"
+
       - name: Package with Binaries
         run: |
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
+          # 将解压出来的 iOS 工具和库放入 App 根目录，代码会通过 Bundle 路径调用它们
           cp dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib Payload/DebManager.app/
           zip -r9 DebManager_Ultimate.tipa Payload
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-Ultimate
+          name: DebManager-Ultimate-Fixed
           path: DebManager_Ultimate.tipa
