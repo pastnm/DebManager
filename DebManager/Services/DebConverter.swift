@@ -34,6 +34,9 @@ class DebConverter {
         let outURL = outputDirectory.appendingPathComponent(
             "\(baseName.isEmpty ? "converted" : baseName)_\(targetArch.archString).deb"
         )
+        let sourceData = try Data(contentsOf: sourceURL)
+
+        try preflightCompatibilityCheck(sourceData: sourceData, from: sourceArch, to: targetArch)
 
         // Try dpkg-deb first (jailbroken devices or injected binaries)
         if let dpkg = findBin("dpkg-deb") {
@@ -47,7 +50,7 @@ class DebConverter {
                 chmodP(deb, r: true, m: "755")
                 chmodP(deb.appendingPathComponent("control"), r: false, m: "644")
                 try performDiskPathMapping(in: ext, from: sourceArch, to: targetArch)
-                try updateControl(at: deb.appendingPathComponent("control"), to: targetArch)
+                try updateControl(at: deb.appendingPathComponent("control"), from: sourceArch, to: targetArch)
                 try updateScripts(in: deb, from: sourceArch, to: targetArch)
                 signBins(in: ext); cleanDS(in: ext)
                 for c in ["-Zzstd", "-Zgzip", ""] {
@@ -58,12 +61,11 @@ class DebConverter {
         }
 
         // Pure Swift: modify tar headers in-memory (no extraction, no repacking from scratch)
-        return try inMemoryConvert(source: sourceURL, from: sourceArch, to: targetArch, outURL: outURL)
+        return try inMemoryConvert(sourceData: sourceData, from: sourceArch, to: targetArch, outURL: outURL)
     }
 
     // MARK: - In-Memory Conversion
-    private func inMemoryConvert(source: URL, from: ArchType, to: ArchType, outURL: URL) throws -> URL {
-        let debData = try Data(contentsOf: source)
+    private func inMemoryConvert(sourceData debData: Data, from: ArchType, to: ArchType, outURL: URL) throws -> URL {
         let arEntries = try parseAr(data: debData)
 
         var debBin = Data("2.0\n".utf8)
@@ -82,7 +84,7 @@ class DebConverter {
 
         // Modify control tar (change Architecture field)
         let ctrlTar = try decompress(ctrl.data, ctrl.name)
-        let newCtrlTar = modifyControlInTar(tarData: ctrlTar, to: to)
+        let newCtrlTar = modifyControlInTar(tarData: ctrlTar, from: from, to: to)
         let newCtrlGz = makeStoredGzip(newCtrlTar)
 
         // Try to decompress and modify data tar for path remapping
@@ -277,7 +279,7 @@ class DebConverter {
         data[off + 155] = 0x20
     }
 
-    private func modifyControlInTar(tarData: Data, to: ArchType) -> Data {
+    private func modifyControlInTar(tarData: Data, from: ArchType, to: ArchType) -> Data {
         var result = Data(tarData)
         var off = 0
         while off + 512 <= result.count {
@@ -293,7 +295,7 @@ class DebConverter {
                 guard dataStart + size <= result.count,
                       var content = String(data: result[dataStart..<dataStart+size], encoding: .utf8) else { break }
 
-                content = updateControlContent(content, to: to)
+                content = updateControlContent(content, from: from, to: to)
                 let newData = Data(content.utf8)
                 let newSize = newData.count
                 let sizeStr = String(newSize, radix: 8)
@@ -315,6 +317,28 @@ class DebConverter {
             if size > 0 { off += ((size + 511) / 512) * 512 }
         }
         return result
+    }
+
+    private func readControlContent(from tarData: Data) -> String? {
+        var off = 0
+        while off + 512 <= tarData.count {
+            if tarData[off..<off+512].allSatisfy({ $0 == 0 }) { break }
+            let path = readTarPath(from: tarData, at: off)
+            let cleanPath = path.replacingOccurrences(of: "./", with: "")
+            let szStr = readField(from: tarData, at: off + 124, length: 12)
+            let size = Int(szStr, radix: 8) ?? 0
+            let type = tarData[off + 156]
+
+            if (type == 0 || type == 0x30) && cleanPath == "control" && size > 0 {
+                let dataStart = off + 512
+                guard dataStart + size <= tarData.count else { return nil }
+                return String(data: tarData[dataStart..<dataStart+size], encoding: .utf8)
+            }
+
+            off += 512
+            if size > 0 { off += ((size + 511) / 512) * 512 }
+        }
+        return nil
     }
 
     private func performDiskPathMapping(in dir: URL, from: ArchType, to: ArchType) throws {
@@ -695,9 +719,9 @@ class DebConverter {
             if m == 0xFEEDFACF || m == 0xFEEDFACE || m == 0xBEBAFECA || m == 0xCFFAEDFE || m == 0xCEFAEDFE {
                 spawn(ldid, ["-S", u.path]) } } }
 
-    private func updateControl(at p: URL, to: ArchType) throws {
+    private func updateControl(at p: URL, from: ArchType, to: ArchType) throws {
         guard var c = try? String(contentsOf: p, encoding: .utf8) else { return }
-        c = updateControlContent(c, to: to)
+        c = updateControlContent(c, from: from, to: to)
         try c.write(to: p, atomically: true, encoding: .utf8)
     }
 
@@ -726,16 +750,56 @@ class DebConverter {
 
     private func isDirEmpty(_ u: URL) -> Bool { (try? fm.contentsOfDirectory(atPath: u.path))?.isEmpty ?? true }
 
-    private func updateControlContent(_ content: String, to: ArchType) -> String {
+    private func preflightCompatibilityCheck(sourceData: Data, from: ArchType, to: ArchType) throws {
+        guard from == .roothide && to == .rootless else { return }
+
+        let arEntries = try parseAr(data: sourceData)
+        guard let controlEntry = arEntries.first(where: { $0.name.hasPrefix("control.tar") }) else { return }
+        let controlTar = try decompress(controlEntry.data, controlEntry.name)
+        guard let control = readControlContent(from: controlTar) else { return }
+
+        let packageID = controlField(named: "Package", in: control)?.lowercased() ?? ""
+        let version = controlField(named: "Version", in: control)?.lowercased() ?? ""
+        let description = controlField(named: "Description", in: control)?.lowercased() ?? ""
+        let dependencyBlob = ["Depends", "Pre-Depends", "Provides", "Conflicts", "Recommends"]
+            .compactMap { controlField(named: $0, in: control)?.lowercased() }
+            .joined(separator: ", ")
+
+        let looksLikeRepackedRootless =
+            version.contains("~rootide") ||
+            version.contains("~roothide") ||
+            dependencyBlob.contains("patches-")
+
+        let isRoothideNativePackage =
+            packageID.hasPrefix("com.roothide.") ||
+            dependencyBlob.contains("com.roothide.patchloader") ||
+            description.contains("patch rootless package to roothide")
+
+        if isRoothideNativePackage && !looksLikeRepackedRootless {
+            throw ConversionError.conversionFailed("this package is roothide-native and cannot be converted back to rootless")
+        }
+    }
+
+    private func controlField(named field: String, in control: String) -> String? {
+        control
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+            .first(where: { $0.hasPrefix("\(field):") })
+            .map { String($0.dropFirst(field.count + 1)).trimmingCharacters(in: .whitespaces) }
+    }
+
+    private func updateControlContent(_ content: String, from: ArchType, to: ArchType) -> String {
         var lines = content
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
 
         updateField(in: &lines, field: "Architecture", value: to.archString)
+        updateField(in: &lines, field: "Version", value: normalizeVersionField(fieldValue(in: lines, field: "Version"), from: from, to: to))
         for field in ["Depends", "Pre-Depends"] {
             let current = fieldValue(in: lines, field: field)
-            let normalized = normalizeDependencyField(current, to: to)
+            let normalized = normalizeDependencyField(current, field: field, from: from, to: to)
             updateField(in: &lines, field: field, value: normalized)
         }
 
@@ -760,7 +824,18 @@ class DebConverter {
         }
     }
 
-    private func normalizeDependencyField(_ value: String?, to: ArchType) -> String? {
+    private func normalizeVersionField(_ value: String?, from: ArchType, to: ArchType) -> String? {
+        guard var version = value?.trimmingCharacters(in: .whitespacesAndNewlines), !version.isEmpty else { return value }
+        if from == .roothide && to != .roothide {
+            for suffix in ["~rootide", "~roothide"] where version.lowercased().hasSuffix(suffix) {
+                version.removeLast(suffix.count)
+                break
+            }
+        }
+        return version
+    }
+
+    private func normalizeDependencyField(_ value: String?, field: String, from: ArchType, to: ArchType) -> String? {
         let entries = (value ?? "")
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -768,12 +843,16 @@ class DebConverter {
 
         var cleaned: [String] = []
         for entry in entries {
-            let name = dependencyName(from: entry)
+            let name = dependencyName(from: entry).lowercased()
             if name == "rootless-compat" {
                 if to == .roothide {
                     cleaned.append("rootless-compat (>= 0.9)")
                 }
                 continue
+            }
+            if from == .roothide && to != .roothide {
+                if name == "com.roothide.patchloader" { continue }
+                if field == "Pre-Depends" && name.hasPrefix("patches-") { continue }
             }
             cleaned.append(entry)
         }
