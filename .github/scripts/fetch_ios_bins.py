@@ -3,8 +3,9 @@ import io
 import lzma
 import os
 import shutil
+import subprocess
 import tarfile
-import urllib.request
+import traceback
 from pathlib import Path
 
 import zstandard as zstd
@@ -15,14 +16,20 @@ REPO_PATH = f"{BASE_URL}/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm/Pack
 PACKAGES = ("dpkg", "zstd", "libzstd1", "liblzma5")
 
 
-def download_text(url: str) -> str:
-    with urllib.request.urlopen(url) as response:
-        return response.read().decode("utf-8", errors="replace")
-
-
-def download_bytes(url: str) -> bytes:
-    with urllib.request.urlopen(url) as response:
-        return response.read()
+def run_curl(url: str, destination: Path) -> None:
+    subprocess.run(
+        [
+            "curl",
+            "-fsSL",
+            "--retry",
+            "3",
+            "--retry-all-errors",
+            url,
+            "-o",
+            str(destination),
+        ],
+        check=True,
+    )
 
 
 def parse_packages_index(contents: str) -> dict[str, str]:
@@ -107,7 +114,9 @@ def main() -> None:
         shutil.rmtree(ios_bins)
     ios_bins.mkdir()
 
-    index = download_text(REPO_PATH)
+    index_path = ios_bins / "Packages"
+    run_curl(REPO_PATH, index_path)
+    index = index_path.read_text(encoding="utf-8", errors="replace")
     package_paths = parse_packages_index(index)
 
     missing = [pkg for pkg in PACKAGES if pkg not in package_paths]
@@ -116,9 +125,10 @@ def main() -> None:
 
     os.chdir(ios_bins)
     for pkg in PACKAGES:
-        deb_bytes = download_bytes(f"{BASE_URL}/{package_paths[pkg]}")
         deb_path = Path(f"{pkg}.deb")
-        deb_path.write_bytes(deb_bytes)
+        print(f"Downloading {pkg} from {package_paths[pkg]}")
+        run_curl(f"{BASE_URL}/{package_paths[pkg]}", deb_path)
+        deb_bytes = deb_path.read_bytes()
 
         extract_dir = Path("extracted") / pkg
         extract_dir.mkdir(parents=True, exist_ok=True)
@@ -139,4 +149,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        traceback.print_exc()
+        print(f"::error::{exc}")
+        raise
