@@ -1,23 +1,27 @@
-name: Build DebManager Final
+name: Build DebManager Ultimate
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
       - name: Unzip Project
+        run: unzip DebManager.xcodeproj.zip
+      - name: Download iOS Binaries
         run: |
-          # 解压工程文件
-          unzip DebManager.xcodeproj.zip
-
-      - name: Install Build Dependencies
-        run: |
-          brew install zstd xz dpkg libarchive
-
+          mkdir -p ios_bins
+          cd ios_bins
+          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/dpkg_1.22.11_iphoneos-arm64.deb
+          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/zstd_1.5.6_iphoneos-arm64.deb
+          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/libzstd1_1.5.6_iphoneos-arm64.deb
+          curl -LO https://apt.procursus.it/pool/main/i/iphoneos-arm64/1900/liblzma5_5.6.3_iphoneos-arm64.deb
+          for f in *.deb; do ar x $f && tar -xf data.tar.*; done
+          cp usr/bin/dpkg-deb ../
+          cp usr/bin/zstd ../
+          cp usr/lib/libzstd.1.dylib ../
+          cp usr/lib/liblzma.5.dylib ../
       - name: Inject Chinese Localization
         run: |
           cat << 'EOF' > /tmp/zh.strings
@@ -85,21 +89,18 @@ jobs:
           "version"="版本 1.0.0";
           "yes"="是";
           EOF
-          # 替换 Resources 目录下的语言文件
           find . -name "Localizable.strings" -exec cp /tmp/zh.strings {} \;
-
-      - name: Build and Package
+      - name: Build
         run: |
-          # 编译项目
           xcodebuild clean build -project DebManager.xcodeproj -scheme DebManager -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS"
-          
-          # 创建 tipa 结构
-          mkdir -p Payload
-          cp -r build/Build/Products/Release-iphoneos/DebManager.app Payload/
-          zip -r9 DebManager_ZH.tipa Payload
-
-      - name: Upload Artifact
+      - name: Package with Binaries
+        run: |
+          mkdir -p Payload/DebManager.app
+          cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
+          cp dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib Payload/DebManager.app/
+          zip -r9 DebManager_Ultimate.tipa Payload
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-Chinese-TIPA
-          path: DebManager_ZH.tipa
+          name: DebManager-Ultimate
+          path: DebManager_Ultimate.tipa
