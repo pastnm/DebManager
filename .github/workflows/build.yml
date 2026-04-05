@@ -1,6 +1,9 @@
 name: Build DebManager Dynamic Final
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
