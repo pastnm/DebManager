@@ -80,7 +80,7 @@ extension String {
             return translation
         }
 
-        NSLocalizedString(self, comment: "")
+        return NSLocalizedString(self, comment: "")
     }
 
     func localized(with arguments: CVarArg...) -> String {
