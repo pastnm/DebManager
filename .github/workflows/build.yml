@@ -48,6 +48,8 @@ jobs:
             download_package "$pkg"
           done
 
+          python3 -m pip install --quiet zstandard
+
           mkdir -p extracted
           for f in *.deb; do
             pkg_dir="extracted/${f%.deb}"
@@ -55,15 +57,18 @@ jobs:
 
             (
               cd "$pkg_dir"
-              ar x "../../$f"
-              set -- data.tar.*
+              tar -xf "../../$f"
 
-              if [ "$1" = "data.tar.*" ]; then
+              if [ -f data.tar.zst ]; then
+                python3 -c "import zstandard; d=zstandard.ZstdDecompressor(); src=open('data.tar.zst','rb'); dst=open('data.tar','wb'); dst.write(d.decompress(src.read())); src.close(); dst.close()"
+                tar -xf data.tar
+              elif [ -f data.tar.xz ] || [ -f data.tar.gz ] || [ -f data.tar ]; then
+                set -- data.tar.*
+                tar -xf "$1"
+              else
                 echo "Missing data archive in $f"
                 exit 1
               fi
-
-              tar -xf "$1"
             )
           done
 
