@@ -88,10 +88,13 @@ def extract_data_member(deb_bytes: bytes, output_dir: Path) -> None:
         archive.extractall(output_dir)
 
 
-def copy_match(pattern: str, destination: Path) -> None:
+def copy_match(pattern: str, destination: Path, required: bool = True) -> None:
     matches = sorted(Path(".").glob(pattern))
     if not matches:
-        raise FileNotFoundError(f"No files matched {pattern}")
+        if required:
+            raise FileNotFoundError(f"No files matched {pattern}")
+        print(f"Warning: no files matched {pattern}")
+        return
 
     for src in matches:
         dst = destination / src.name
@@ -134,10 +137,10 @@ def main() -> None:
         extract_dir.mkdir(parents=True, exist_ok=True)
         extract_data_member(deb_bytes, extract_dir)
 
-    copy_match("extracted/*/usr/bin/dpkg-deb", Path("."))
-    copy_match("extracted/*/usr/bin/zstd", Path("."))
-    copy_match("extracted/*/usr/lib/libzstd*.dylib", Path("."))
-    copy_match("extracted/*/usr/lib/liblzma*.dylib", Path("."))
+    copy_match("extracted/**/usr/bin/dpkg-deb", Path("."))
+    copy_match("extracted/**/usr/bin/zstd", Path("."))
+    copy_match("extracted/**/libzstd*.dylib", Path("."))
+    copy_match("extracted/**/liblzma*.dylib", Path("."), required=False)
 
     for path in (
         Path("dpkg-deb"),

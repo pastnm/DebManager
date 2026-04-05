@@ -40,7 +40,9 @@ jobs:
         run: |
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
-          cp -P dpkg-deb zstd libzstd*.dylib liblzma*.dylib Payload/DebManager.app/
+          shopt -s nullglob
+          extras=(dpkg-deb zstd libzstd*.dylib liblzma*.dylib)
+          cp -P "${extras[@]}" Payload/DebManager.app/
           zip -r9 DebManager_Fixed_Final.tipa Payload
 
       - name: Upload
