@@ -11,12 +11,10 @@ jobs:
 
       - name: Install Build Dependencies
         run: |
-          # 安装编译需要的底层依赖，帮助源码在编译阶段正确引入 zstd 支持
           brew install zstd xz dpkg libarchive
 
       - name: Inject Chinese Localization
         run: |
-          # 生成汉化临时文件
           cat << 'EOF' > /tmp/zh.strings
           "about"="关于";
           "add"="添加";
@@ -82,22 +80,23 @@ jobs:
           "version"="版本 1.0.0";
           "yes"="是";
           EOF
-          
-          # 自动全局查找并覆盖源码里的所有语言文件为中文，省去手动修改的麻烦
           find . -name "Localizable.strings" -exec cp /tmp/zh.strings {} \;
 
-      - name: Build App via Xcode
+      - name: Build and Package
         run: |
-          xcodebuild clean build -project DebManager.xcodeproj -scheme DebManager -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build
-
-      - name: Package tipa
-        run: |
+          PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          PROJECT_DIR=$(dirname "$PROJECT_PATH")
+          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | grep -A 5 "Schemes:" | tail -n 1 | sed 's/^[[:space:]]*//')
+          
+          cd "$PROJECT_DIR"
+          xcodebuild clean build -project "${PROJECT_PATH##*/}" -scheme "$SCHEME_NAME" -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS"
+          
           mkdir -p Payload
-          cp -r build/Build/Products/Release-iphoneos/DebManager.app Payload/
+          cp -r build/Build/Products/Release-iphoneos/*.app Payload/
           zip -r9 DebManager.tipa Payload
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-Chinese
-          path: DebManager.tipa
+          name: DebManager-Fixed
+          path: "**/*.tipa"
