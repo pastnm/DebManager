@@ -90,8 +90,10 @@ class DebConverter {
         var finalDataName = data.name
         var finalDataContent = data.data
 
-        if needsPathRemap, let dataTar = try? decompress(data.data, data.name), isValidTar(dataTar) {
-            let newDataTar = remapPathsInTar(tarData: dataTar, from: from, to: to)
+        if let dataTar = try? decompress(data.data, data.name), isValidTar(dataTar) {
+            let newDataTar = needsPathRemap
+                ? remapPathsInTar(tarData: dataTar, from: from, to: to)
+                : dataTar
             finalDataContent = makeStoredGzip(newDataTar)
             finalDataName = "data.tar.gz"
         }
