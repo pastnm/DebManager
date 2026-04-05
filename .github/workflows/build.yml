@@ -60,7 +60,12 @@ jobs:
               tar -xf "../../$f"
 
               if [ -f data.tar.zst ]; then
-                python3 -c "import zstandard; d=zstandard.ZstdDecompressor(); src=open('data.tar.zst','rb'); dst=open('data.tar','wb'); dst.write(d.decompress(src.read())); src.close(); dst.close()"
+                cat <<'PY' | python3 -
+import zstandard as zstd
+
+with open("data.tar.zst", "rb") as src, open("data.tar", "wb") as dst:
+    zstd.ZstdDecompressor().copy_stream(src, dst)
+PY
                 tar -xf data.tar
               elif [ -f data.tar.xz ] || [ -f data.tar.gz ] || [ -f data.tar ]; then
                 set -- data.tar.*
@@ -88,7 +93,7 @@ jobs:
         run: |
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
-          cp -a dpkg-deb zstd libzstd*.dylib liblzma*.dylib Payload/DebManager.app/
+          cp -P dpkg-deb zstd libzstd*.dylib liblzma*.dylib Payload/DebManager.app/
           zip -r9 DebManager_Fixed_Final.tipa Payload
 
       - name: Upload
