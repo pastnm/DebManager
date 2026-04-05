@@ -440,8 +440,12 @@ class DebConverter {
     }
 
     private func zstdDecompressWithLibrary(_ data: Data, libraryPath: String) throws -> Data {
-        guard let handle = libraryPath.withCString({ dlopen($0, RTLD_NOW | RTLD_LOCAL) }) else {
-            throw ConversionError.conversionFailed("unable to load libzstd")
+        preloadBundledLibraries(excluding: libraryPath)
+        _ = dlerror()
+
+        guard let handle = libraryPath.withCString({ dlopen($0, RTLD_NOW | RTLD_GLOBAL) }) else {
+            let reason = dlerror().map { String(cString: $0) } ?? "unknown dyld error"
+            throw ConversionError.conversionFailed("unable to load libzstd: \(reason)")
         }
         defer { dlclose(handle) }
 
@@ -550,8 +554,8 @@ class DebConverter {
     private func findLibrary(prefix: String) -> String? {
         let bundlePath = Bundle.main.bundlePath
         let searchDirs = [
-            bundlePath + "/Helpers",
             bundlePath + "/Frameworks",
+            bundlePath + "/Helpers",
             bundlePath,
             "/var/jb/usr/lib",
             "/usr/lib"
@@ -572,6 +576,24 @@ class DebConverter {
         }
 
         return nil
+    }
+
+    private func preloadBundledLibraries(excluding excludedPath: String) {
+        let bundlePath = Bundle.main.bundlePath
+        let searchDirs = [
+            bundlePath + "/Frameworks",
+            bundlePath + "/Helpers"
+        ]
+
+        for dir in searchDirs where fm.fileExists(atPath: dir) {
+            guard let items = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for item in items.sorted() where item.hasSuffix(".dylib") {
+                let path = dir + "/\(item)"
+                guard path != excludedPath else { continue }
+                _ = path.withCString { dlopen($0, RTLD_NOW | RTLD_GLOBAL) }
+                _ = dlerror()
+            }
+        }
     }
 
     private func canSpawn(_ path: String) -> Bool {
