@@ -6,6 +6,11 @@ private struct SharePayload: Identifiable {
     let url: URL
 }
 
+private struct ExportChoice: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 private struct ActivityShareSheet: UIViewControllerRepresentable {
     let url: URL
 
@@ -16,6 +21,18 @@ private struct ActivityShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct FileExportSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let controller = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+        controller.shouldShowFileExtensions = true
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
 }
 
 struct DownloadsView: View {
@@ -30,6 +47,8 @@ struct DownloadsView: View {
     @State private var showBatchConvert = false
     @State private var batchTarget: ArchType = .rootless
     @State private var sharePayload: SharePayload?
+    @State private var exportPayload: SharePayload?
+    @State private var exportChoice: ExportChoice?
 
     var body: some View {
         NavigationView {
@@ -84,6 +103,9 @@ struct DownloadsView: View {
             .sheet(item: $sharePayload) { payload in
                 ActivityShareSheet(url: payload.url)
             }
+            .sheet(item: $exportPayload) { payload in
+                FileExportSheet(url: payload.url)
+            }
             .alert("confirm_delete".localized, isPresented: $showDeleteAlert) {
                 Button("delete".localized, role: .destructive) {
                     if let pkg = packageToDelete {
@@ -101,6 +123,27 @@ struct DownloadsView: View {
                     }
                 }
                 Button("cancel".localized, role: .cancel) {}
+            }
+            .confirmationDialog(
+                "share".localized,
+                isPresented: Binding(
+                    get: { exportChoice != nil },
+                    set: { if !$0 { exportChoice = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: exportChoice
+            ) { choice in
+                Button("share".localized) {
+                    sharePayload = SharePayload(url: choice.url)
+                    exportChoice = nil
+                }
+                Button("save".localized) {
+                    exportPayload = SharePayload(url: choice.url)
+                    exportChoice = nil
+                }
+                Button("cancel".localized, role: .cancel) {
+                    exportChoice = nil
+                }
             }
         }
         .navigationViewStyle(.stack)
@@ -176,7 +219,7 @@ struct DownloadsView: View {
             downloadManager.showToast("share".localized + ": \(error.localizedDescription)")
             return
         }
-        sharePayload = SharePayload(url: sharedURL)
+        exportChoice = ExportChoice(url: sharedURL)
     }
 
     private func makeSharableCopy(of url: URL) throws -> URL {
