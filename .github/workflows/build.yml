@@ -9,8 +9,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Debug - List Files
+        run: ls -R  # 在日志中列出所有文件，方便如果报错时排查路径
+
       - name: Install Build Dependencies
         run: |
+          # 安装底层依赖，尝试为编译环境提供 zstd 支持
           brew install zstd xz dpkg libarchive
 
       - name: Inject Chinese Localization
@@ -80,23 +84,43 @@ jobs:
           "version"="版本 1.0.0";
           "yes"="是";
           EOF
+          # 自动查找并替换所有语言文件
           find . -name "Localizable.strings" -exec cp /tmp/zh.strings {} \;
 
       - name: Build and Package
         run: |
-          PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          # 1. 自动寻找工程文件 (.xcodeproj 或 .xcworkspace)
+          PROJECT_PATH=$(find . -name "*.xcodeproj" -o -name "*.xcworkspace" | head -n 1)
+          if [ -z "$PROJECT_PATH" ]; then
+            echo "Error: No project file found!"
+            exit 1
+          fi
+          
           PROJECT_DIR=$(dirname "$PROJECT_PATH")
-          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | grep -A 5 "Schemes:" | tail -n 1 | sed 's/^[[:space:]]*//')
+          PROJECT_FILE=$(basename "$PROJECT_PATH")
+          echo "Found project: $PROJECT_FILE in $PROJECT_DIR"
           
+          # 2. 自动确定 Scheme 名 (通常是第一个)
+          if [[ "$PROJECT_FILE" == *.xcworkspace ]]; then
+            SCHEME_NAME=$(xcodebuild -list -workspace "$PROJECT_PATH" | grep -A 5 "Schemes:" | head -n 2 | tail -n 1 | sed 's/^[[:space:]]*//')
+            BUILD_TYPE="-workspace \"$PROJECT_FILE\""
+          else
+            SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | grep -A 5 "Schemes:" | head -n 2 | tail -n 1 | sed 's/^[[:space:]]*//')
+            BUILD_TYPE="-project \"$PROJECT_FILE\""
+          fi
+          echo "Using scheme: $SCHEME_NAME"
+
+          # 3. 执行编译
           cd "$PROJECT_DIR"
-          xcodebuild clean build -project "${PROJECT_PATH##*/}" -scheme "$SCHEME_NAME" -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS"
+          eval "xcodebuild clean build $BUILD_TYPE -scheme \"$SCHEME_NAME\" -configuration Release CODE_SIGN_IDENTITY=\"\" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination \"generic/platform=iOS\""
           
+          # 4. 打包为 .tipa
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/*.app Payload/
-          zip -r9 DebManager.tipa Payload
+          zip -r9 DebManager_New.tipa Payload
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-Fixed
+          name: DebManager-Final
           path: "**/*.tipa"
