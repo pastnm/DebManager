@@ -1,4 +1,5 @@
 name: Build DebManager Dynamic Final
+
 on:
   workflow_dispatch:
 
@@ -16,108 +17,63 @@ jobs:
         run: |
           mkdir -p ios_bins
           cd ios_bins
-          
-          # 获取索引
-          fetch_packages() {
-            curl -sfL "$1/Packages.xz" -o Packages.xz && xz -d Packages.xz && return 0
-            curl -sfL "$1/Packages.gz" -o Packages.gz && gunzip Packages.gz && return 0
-            curl -sfL "$1/Packages" -o Packages && return 0
-            return 1
-          }
 
-          fetch_packages "https://apt.procurs.us/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm" || \
-          fetch_packages "https://strap.palera.in/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm"
+          BASE_URL="https://strap.palera.in"
+          REPO_PATH="$BASE_URL/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm"
+
+          curl -fsSL "$REPO_PATH/Packages" -o Packages
 
           get_path() {
-            grep -A 25 "Package: $1$" Packages | grep "Filename: " | head -n 1 | cut -d' ' -f2
+            awk -v pkg="$1" '
+              $0 == "Package: " pkg { found = 1; next }
+              found && /^Filename: / { print substr($0, 11); exit }
+              found && /^Package: / { found = 0 }
+            ' Packages
           }
 
-          # 下载
-          curl -fLO "https://apt.procurs.us/$(get_path 'dpkg')" || curl -fLO "https://strap.palera.in/$(get_path 'dpkg')"
-          curl -fLO "https://apt.procurs.us/$(get_path 'zstd')" || curl -fLO "https://strap.palera.in/$(get_path 'zstd')"
-          curl -fLO "https://apt.procurs.us/$(get_path 'libzstd1')" || curl -fLO "https://strap.palera.in/$(get_path 'libzstd1')"
-          curl -fLO "https://apt.procurs.us/$(get_path 'liblzma5')" || curl -fLO "https://strap.palera.in/$(get_path 'liblzma5')"
+          download_package() {
+            local pkg="$1"
+            local path
+            path="$(get_path "$pkg")"
 
-          # 解压
-          for f in *.deb; do ar x "$f" && tar -xf data.tar.*; done
-          
-          # 复制所有相关文件及快捷方式(保留 symlink)
-          cp -a usr/bin/dpkg-deb ../
-          cp -a usr/bin/zstd ../
-          cp -a usr/lib/libzstd*.dylib ../
-          cp -a usr/lib/liblzma*.dylib ../
+            if [ -z "$path" ]; then
+              echo "Failed to resolve package path for $pkg"
+              exit 1
+            fi
+
+            curl -fsSLo "${pkg}.deb" "$BASE_URL/$path"
+          }
+
+          for pkg in dpkg zstd libzstd1 liblzma5; do
+            download_package "$pkg"
+          done
+
+          mkdir -p extracted
+          for f in *.deb; do
+            pkg_dir="extracted/${f%.deb}"
+            mkdir -p "$pkg_dir"
+
+            (
+              cd "$pkg_dir"
+              ar x "../../$f"
+              data_archive="$(find . -maxdepth 1 -name 'data.tar.*' | head -n 1)"
+
+              if [ -z "$data_archive" ]; then
+                echo "Missing data archive in $f"
+                exit 1
+              fi
+
+              tar -xf "$data_archive"
+            )
+          done
+
+          cp -a extracted/*/usr/bin/dpkg-deb ../
+          cp -a extracted/*/usr/bin/zstd ../
+          cp -a extracted/*/usr/lib/libzstd*.dylib ../
+          cp -a extracted/*/usr/lib/liblzma*.dylib ../
           cd ..
-          
-          ls -l dpkg-deb zstd libzstd*.dylib liblzma*.dylib
 
-      - name: Inject Chinese Localization
-        run: |
-          cat << 'EOF' > /tmp/zh.strings
-          "about"="关于";
-          "add"="添加";
-          "add_repo"="添加软件源";
-          "add_repo_hint"="输入兼容 Cydia/Sileo 的软件源 URL";
-          "already_downloaded"="已下载";
-          "app_desc"="iOS .deb 软件包管理器";
-          "app_name"="应用名称";
-          "back"="返回";
-          "browse"="浏览";
-          "browse_repo"="浏览";
-          "cancel"="取消";
-          "confirm_delete"="确认删除此软件包？";
-          "conversion_failed"="转换失败";
-          "convert"="转换";
-          "convert_to"="转换为";
-          "converted"="转换完成！";
-          "converted_to"="已转换为";
-          "converting"="转换中...";
-          "current_arch"="当前架构";
-          "delete"="删除";
-          "deleted"="已删除";
-          "developer"="开发者";
-          "done"="完成";
-          "download"="下载";
-          "download_failed"="下载失败";
-          "downloaded_success"="下载成功";
-          "downloading"="下载中...";
-          "downloads"="下载";
-          "follow_twitter"="在 𝕏 上关注";
-          "language"="语言";
-          "language_auto"="跟随设备语言";
-          "loading"="加载中...";
-          "managed_debs"="已管理的软件包";
-          "no"="否";
-          "no_downloads"="无已下载的软件包";
-          "no_downloads_sub"="下载的 .deb 文件将显示在此处";
-          "no_repos"="无软件源";
-          "no_repos_sub"="添加软件源以开始浏览和下载 .deb 软件包";
-          "no_results"="未找到结果。请尝试不同的搜索词。";
-          "packages"="软件包";
-          "packages_converted"="个软件包已转换";
-          "remove"="移除";
-          "repo_packages"="软件源软件包";
-          "repo_url"="软件源 URL";
-          "repos"="软件源";
-          "save"="保存";
-          "saved_to"="已保存到“文件”应用";
-          "search"="搜索软件包...";
-          "search_btn"="搜索";
-          "search_results"="搜索结果";
-          "searching"="搜索中...";
-          "select"="选择";
-          "settings"="设置";
-          "share"="分享";
-          "shared_via"="已打开分享面板";
-          "start_search"="搜索 .deb 软件包";
-          "start_search_sub"="从 iOS 软件源中查找插件、应用和工具";
-          "supported_arch"="支持的架构";
-          "supported_languages"="支持的语言";
-          "target_arch"="目标架构";
-          "trollstore_compatible"="兼容 TrollStore (巨魔)";
-          "version"="版本 1.0.0";
-          "yes"="是";
-          EOF
-          find . -name "Localizable.strings" -exec cp /tmp/zh.strings {} \;
+          ls -l dpkg-deb zstd libzstd*.dylib liblzma*.dylib
 
       - name: Build
         run: |
