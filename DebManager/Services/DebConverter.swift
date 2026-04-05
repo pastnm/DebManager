@@ -82,8 +82,7 @@ class DebConverter {
 
         // Modify control tar (change Architecture field)
         let ctrlTar = try decompress(ctrl.data, ctrl.name)
-        let newCtrlTar = modifyFieldInTar(tarData: ctrlTar, file: "control",
-                                          field: "Architecture", value: to.archString)
+        let newCtrlTar = modifyControlInTar(tarData: ctrlTar, to: to)
         let newCtrlGz = makeStoredGzip(newCtrlTar)
 
         // Try to decompress and modify data tar for path remapping
@@ -276,7 +275,7 @@ class DebConverter {
         data[off + 155] = 0x20
     }
 
-    private func modifyFieldInTar(tarData: Data, file: String, field: String, value: String) -> Data {
+    private func modifyControlInTar(tarData: Data, to: ArchType) -> Data {
         var result = Data(tarData)
         var off = 0
         while off + 512 <= result.count {
@@ -287,12 +286,12 @@ class DebConverter {
             let size = Int(szStr, radix: 8) ?? 0
             let type = result[off + 156]
 
-            if (type == 0 || type == 0x30) && cleanPath == file && size > 0 {
+            if (type == 0 || type == 0x30) && cleanPath == "control" && size > 0 {
                 let dataStart = off + 512
                 guard dataStart + size <= result.count,
                       var content = String(data: result[dataStart..<dataStart+size], encoding: .utf8) else { break }
 
-                content = replaceField(in: content, field: field, value: value)
+                content = updateControlContent(content, to: to)
                 let newData = Data(content.utf8)
                 let newSize = newData.count
                 let sizeStr = String(newSize, radix: 8)
@@ -696,9 +695,8 @@ class DebConverter {
 
     private func updateControl(at p: URL, to: ArchType) throws {
         guard var c = try? String(contentsOf: p, encoding: .utf8) else { return }
-        c = replaceField(in: c, field: "Architecture", value: to.archString)
-        let lines = c.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        try (lines.joined(separator: "\n") + "\n").write(to: p, atomically: true, encoding: .utf8)
+        c = updateControlContent(c, to: to)
+        try c.write(to: p, atomically: true, encoding: .utf8)
     }
 
     private func updateScripts(in deb: URL, from: ArchType, to: ArchType) throws {
@@ -725,10 +723,75 @@ class DebConverter {
             } else { if fm.fileExists(atPath: di.path) { try fm.removeItem(at: di) }; try fm.moveItem(at: i, to: di) } } }
 
     private func isDirEmpty(_ u: URL) -> Bool { (try? fm.contentsOfDirectory(atPath: u.path))?.isEmpty ?? true }
-    private func replaceField(in c: String, field: String, value: String) -> String {
-        var l = c.components(separatedBy: "\n"); var f = false
-        for i in 0..<l.count where l[i].hasPrefix("\(field):") { l[i] = "\(field): \(value)"; f = true; break }
-        if !f { l.append("\(field): \(value)") }; return l.joined(separator: "\n") }
+
+    private func updateControlContent(_ content: String, to: ArchType) -> String {
+        var lines = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+
+        updateField(in: &lines, field: "Architecture", value: to.archString)
+        for field in ["Depends", "Pre-Depends"] {
+            let current = fieldValue(in: lines, field: field)
+            let normalized = normalizeDependencyField(current, to: to)
+            updateField(in: &lines, field: field, value: normalized)
+        }
+
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func fieldValue(in lines: [String], field: String) -> String? {
+        lines.first(where: { $0.hasPrefix("\(field):") })
+            .map { String($0.dropFirst(field.count + 1)).trimmingCharacters(in: .whitespaces) }
+    }
+
+    private func updateField(in lines: inout [String], field: String, value: String?) {
+        if let idx = lines.firstIndex(where: { $0.hasPrefix("\(field):") }) {
+            if let value, !value.isEmpty {
+                lines[idx] = "\(field): \(value)"
+            } else {
+                lines.remove(at: idx)
+            }
+        } else if let value, !value.isEmpty {
+            lines.append("\(field): \(value)")
+        }
+    }
+
+    private func normalizeDependencyField(_ value: String?, to: ArchType) -> String? {
+        let entries = (value ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        var cleaned: [String] = []
+        for entry in entries {
+            let name = dependencyName(from: entry)
+            if name == "rootless-compat" {
+                if to == .roothide {
+                    cleaned.append("rootless-compat (>= 0.9)")
+                }
+                continue
+            }
+            cleaned.append(entry)
+        }
+
+        if to == .roothide && !cleaned.contains(where: { dependencyName(from: $0) == "rootless-compat" }) {
+            cleaned.insert("rootless-compat (>= 0.9)", at: 0)
+        }
+
+        return cleaned.isEmpty ? nil : cleaned.joined(separator: ", ")
+    }
+
+    private func dependencyName(from entry: String) -> String {
+        let trimmed = entry.trimmingCharacters(in: .whitespaces)
+        let stopSet = CharacterSet(charactersIn: " (")
+        if let idx = trimmed.rangeOfCharacter(from: stopSet) {
+            return String(trimmed[..<idx.lowerBound])
+        }
+        return trimmed
+    }
+
     private func cleanDS(in d: URL) {
         if let e = fm.enumerator(at: d, includingPropertiesForKeys: nil) {
             for case let u as URL in e where u.lastPathComponent == ".DS_Store" { try? fm.removeItem(at: u) } } }
