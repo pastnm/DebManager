@@ -455,10 +455,14 @@ class DebConverter {
 
     private func findBin(_ name: String) -> String? {
         // 优先在 App 内部 Bundle 路径查找注入的二进制工具
-        let bundleToolPath = Bundle.main.bundlePath + "/\(name)"
+        let bundlePath = Bundle.main.bundlePath
+        let helperDir = bundlePath + "/Helpers"
+        let frameworksDir = bundlePath + "/Frameworks"
         
         var paths = [
-            bundleToolPath,
+            helperDir + "/\(name)",
+            frameworksDir + "/\(name)",
+            bundlePath + "/\(name)",
             "/var/jb/usr/bin/\(name)",
             "/usr/bin/\(name)",
             "/usr/local/bin/\(name)",
@@ -524,17 +528,39 @@ class DebConverter {
     }
 
     private func makeEnv(for executablePath: String) -> [String] {
-        var env = [
-            "PATH=/usr/bin:/var/jb/usr/bin:/bin:/sbin",
-            "TMPDIR=\(fm.temporaryDirectory.path)"
-        ]
         let bundlePath = Bundle.main.bundlePath
+        var pathDirs: [String] = []
+
+        func appendDir(_ path: String) {
+            guard !path.isEmpty, !pathDirs.contains(path) else { return }
+            pathDirs.append(path)
+        }
+
         if executablePath.hasPrefix(bundlePath) {
             let execDir = URL(fileURLWithPath: executablePath).deletingLastPathComponent().path
-            let libraryPath = "\(bundlePath):\(execDir)"
+            appendDir(execDir)
+            appendDir(bundlePath + "/Helpers")
+            appendDir(bundlePath + "/Frameworks")
+            appendDir(bundlePath)
+        }
+
+        appendDir("/usr/bin")
+        appendDir("/var/jb/usr/bin")
+        appendDir("/bin")
+        appendDir("/sbin")
+
+        var env = [
+            "PATH=\(pathDirs.joined(separator: ":"))",
+            "TMPDIR=\(fm.temporaryDirectory.path)"
+        ]
+
+        let libraryDirs = pathDirs.filter { $0.hasPrefix(bundlePath) && fm.fileExists(atPath: $0) }
+        if !libraryDirs.isEmpty {
+            let libraryPath = libraryDirs.joined(separator: ":")
             env.append("DYLD_LIBRARY_PATH=\(libraryPath)")
             env.append("DYLD_FALLBACK_LIBRARY_PATH=\(libraryPath)")
         }
+
         return env
     }
 

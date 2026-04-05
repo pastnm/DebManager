@@ -43,7 +43,7 @@ def run_curl(url: str, destination: Path) -> None:
 
 
 def parse_packages_index(contents: str) -> dict[str, str]:
-    result: dict[str, str] = {}
+    result: dict[str, tuple[tuple[object, ...], str]] = {}
     for block in contents.strip().split("\n\n"):
         fields = {}
         for line in block.splitlines():
@@ -53,9 +53,44 @@ def parse_packages_index(contents: str) -> dict[str, str]:
             fields[key] = value
         name = fields.get("Package")
         path = fields.get("Filename")
-        if name in PACKAGES and path:
-            result[name] = path
-    return result
+        version = fields.get("Version")
+        if name in PACKAGES and path and version:
+            version_key = make_version_key(version)
+            current = result.get(name)
+            if current is None or version_key > current[0]:
+                result[name] = (version_key, path)
+    return {name: path for name, (_, path) in result.items()}
+
+
+def make_version_key(version: str) -> tuple[object, ...]:
+    key: list[object] = []
+    token = ""
+    is_digit = False
+
+    def flush() -> None:
+        nonlocal token, is_digit
+        if not token:
+            return
+        key.append(int(token) if is_digit else token)
+        token = ""
+
+    for char in version:
+        if char.isdigit():
+            if token and not is_digit:
+                flush()
+            token += char
+            is_digit = True
+        elif char.isalpha():
+            if token and is_digit:
+                flush()
+            token += char
+            is_digit = False
+        else:
+            flush()
+            key.append(char)
+
+    flush()
+    return tuple(key)
 
 
 def iter_ar_members(data: bytes):
