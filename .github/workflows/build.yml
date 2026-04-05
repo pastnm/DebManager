@@ -1,4 +1,4 @@
-name: Build DebManager Ultimate Final Fix
+name: Build DebManager Ultimate Robust
 on:
   workflow_dispatch:
 
@@ -12,42 +12,61 @@ jobs:
       - name: Unzip Project
         run: unzip DebManager.xcodeproj.zip
 
-      - name: Download iOS Binaries
+      - name: Download and Extract iOS Binaries
         run: |
           mkdir -p ios_bins
           cd ios_bins
           
-          # 核心下载函数：如果官方源 404，则尝试镜像源
-          download_pkg() {
-            local path=$1
-            local name=$2
-            echo "正在下载 $name..."
-            curl -fLO "https://apt.procurs.us/pool/main/iphoneos-arm64/1900/$path" || \
-            curl -fLO "https://strap.palera.in/pool/main/iphoneos-arm64/1900/$path" || \
-            echo "警告：$name 下载失败"
+          # 定义稳定的镜像源列表
+          MIRRORS=(
+            "https://apt.procurs.us/pool/main/iphoneos-arm64/1900"
+            "https://strap.palera.in/pool/main/iphoneos-arm64/1900"
+          )
+
+          # 尝试下载函数：遍历镜像源并尝试不同可能的版本号
+          smart_download() {
+            local folder=$1
+            local pkg_name=$2
+            local versions=("1.22.11" "1.22.6" "1.5.7" "1.5.6" "5.6.3" "5.6.1" "5.4.5")
+            
+            for url in "${MIRRORS[@]}"; do
+              for ver in "${versions[@]}"; do
+                local full_url="${url}/${folder}/${pkg_name}_${ver}_iphoneos-arm.deb"
+                echo "尝试下载: $full_url"
+                if curl -fLO "$full_url"; then
+                  echo "成功下载 $pkg_name"
+                  return 0
+                fi
+              done
+            done
+            echo "错误：无法下载 $pkg_name"
+            return 1
           }
 
-          # 使用目前最稳定的版本链接
-          download_pkg "dpkg/dpkg_1.22.6_iphoneos-arm.deb" "dpkg"
-          download_pkg "zstd/zstd_1.5.6_iphoneos-arm.deb" "zstd"
-          download_pkg "zstd/libzstd1_1.5.6_iphoneos-arm.deb" "libzstd"
-          # 修复 liblzma5 的路径（有时在 xz-utils 下，有时在 lzma 下）
-          download_pkg "xz-utils/liblzma5_5.6.1_iphoneos-arm.deb" "liblzma" || \
-          download_pkg "lzma/liblzma5_5.6.1_iphoneos-arm.deb" "liblzma"
+          # 执行下载任务
+          smart_download "dpkg" "dpkg"
+          smart_download "zstd" "zstd"
+          smart_download "zstd" "libzstd1"
+          smart_download "xz-utils" "liblzma5" || smart_download "lzma" "liblzma5"
 
-          # 解压并提取
-          for f in *.deb; do ar x "$f" && tar -xf data.tar.*; done
+          # 统一解压所有 deb 包
+          for f in *.deb; do
+            ar x "$f"
+            tar -xf data.tar.*
+          done
+
+          # 使用 find 自动定位二进制文件，避免路径写死
+          find . -name "dpkg-deb" -type f -exec cp {} ../ \;
+          find . -name "zstd" -type f -exec cp {} ../ \;
+          find . -name "libzstd.1.dylib" -type f -exec cp {} ../ \;
+          find . -name "liblzma.5.dylib" -type f -exec cp {} ../ \;
           
-          # 提取需要的二进制文件和动态库
-          cp usr/bin/dpkg-deb ../ || echo "dpkg-deb missing"
-          cp usr/bin/zstd ../ || echo "zstd missing"
-          cp usr/lib/libzstd.1.dylib ../ || echo "libzstd dylib missing"
-          cp usr/lib/liblzma.5.dylib ../ || echo "liblzma dylib missing"
           cd ..
+          # 验证文件是否已准备就绪
+          ls -l dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib
 
       - name: Inject Chinese Localization
         run: |
-          # 汉化逻辑 [cite: 1]
           cat << 'EOF' > /tmp/zh.strings
           "about"="关于";
           "add"="添加";
@@ -123,12 +142,12 @@ jobs:
         run: |
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
-          # 注入二进制工具，使 App 具备 zstd 解压能力
+          # 确保关键二进制文件被正确打包
           cp dpkg-deb zstd libzstd.1.dylib liblzma.5.dylib Payload/DebManager.app/
-          zip -r9 DebManager_Ultimate_v2.tipa Payload
+          zip -r9 DebManager_Fixed_Ultimate.tipa Payload
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: DebManager-Ultimate-v2
-          path: DebManager_Ultimate_v2.tipa
+          name: DebManager-Fixed-Ultimate
+          path: DebManager_Fixed_Ultimate.tipa
