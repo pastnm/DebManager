@@ -13,7 +13,17 @@ import zstandard as zstd
 
 BASE_URL = "https://strap.palera.in"
 REPO_PATH = f"{BASE_URL}/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm/Packages"
-PACKAGES = ("dpkg", "zstd", "libzstd1", "liblzma5")
+PACKAGES = (
+    "dpkg",
+    "zstd",
+    "libzstd1",
+    "liblzma5",
+    "liblz4-1",
+    "libintl8",
+    "libz-ng2",
+    "libmd0",
+    "libiosexec1",
+)
 
 
 def run_curl(url: str, destination: Path) -> None:
@@ -139,14 +149,12 @@ def main() -> None:
 
     copy_match("extracted/**/usr/bin/dpkg-deb", Path("."))
     copy_match("extracted/**/usr/bin/zstd", Path("."))
-    copy_match("extracted/**/libzstd*.dylib", Path("."))
-    copy_match("extracted/**/liblzma*.dylib", Path("."), required=False)
+    copy_match("extracted/**/*.dylib", Path("."), required=False)
 
     for path in (
         Path("dpkg-deb"),
         Path("zstd"),
-        *sorted(Path(".").glob("libzstd*.dylib")),
-        *sorted(Path(".").glob("liblzma*.dylib")),
+        *sorted(Path(".").glob("*.dylib")),
     ):
         print(path.name)
 

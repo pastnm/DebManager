@@ -526,31 +526,39 @@ class DebConverter {
     private func makeEnv(for executablePath: String) -> [String] {
         let env = ProcessInfo.processInfo.environment
         let bundlePath = Bundle.main.bundlePath
-        let frameworksPath = Bundle.main.privateFrameworksPath ?? ""
         let execDir = URL(fileURLWithPath: executablePath).deletingLastPathComponent().path
         let useBundleRuntime = executablePath.hasPrefix(bundlePath)
-        let pathSeed: [String?] = useBundleRuntime
-            ? [bundlePath, execDir, env["PATH"], "/usr/bin:/var/jb/usr/bin:/bin:/sbin"]
-            : [execDir, env["PATH"], "/usr/bin:/var/jb/usr/bin:/bin:/sbin"]
+        let pathSeed = [
+            useBundleRuntime ? bundlePath : nil,
+            execDir,
+            env["PATH"],
+            "/usr/bin:/var/jb/usr/bin:/bin:/sbin"
+        ]
         let pathParts = pathSeed.compactMap { value in
             guard let value, !value.isEmpty else { return nil }
             return value
         }
-        let librarySeed: [String?] = useBundleRuntime
-            ? [bundlePath, frameworksPath, execDir, env["DYLD_LIBRARY_PATH"], env["DYLD_FALLBACK_LIBRARY_PATH"]]
-            : [env["DYLD_LIBRARY_PATH"], env["DYLD_FALLBACK_LIBRARY_PATH"]]
-        let libraryParts = librarySeed
-            .compactMap { value in
+        var result = [
+            "PATH=\(pathParts.joined(separator: ":"))",
+            "TMPDIR=\(fm.temporaryDirectory.path)"
+        ]
+        if useBundleRuntime {
+            let librarySeed = [
+                bundlePath,
+                execDir,
+                env["DYLD_LIBRARY_PATH"],
+                env["DYLD_FALLBACK_LIBRARY_PATH"]
+            ]
+            let libraryParts = librarySeed.compactMap { value in
                 guard let value, !value.isEmpty else { return nil }
                 return value
             }
-
-        var result = [
-            "PATH=\(pathParts.joined(separator: ":"))",
-            "TMPDIR=\(fm.temporaryDirectory.path)",
-            "DYLD_LIBRARY_PATH=\(libraryParts.joined(separator: ":"))",
-            "DYLD_FALLBACK_LIBRARY_PATH=\(libraryParts.joined(separator: ":"))"
-        ]
+            if !libraryParts.isEmpty {
+                let libPath = libraryParts.joined(separator: ":")
+                result.append("DYLD_LIBRARY_PATH=\(libPath)")
+                result.append("DYLD_FALLBACK_LIBRARY_PATH=\(libPath)")
+            }
+        }
         if let home = env["HOME"], !home.isEmpty { result.append("HOME=\(home)") }
         return result
     }

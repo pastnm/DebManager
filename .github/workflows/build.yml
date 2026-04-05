@@ -42,7 +42,7 @@ jobs:
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/DebManager.app Payload/
           shopt -s nullglob
-          extras=(ios_bins/dpkg-deb ios_bins/zstd ios_bins/libzstd*.dylib ios_bins/liblzma*.dylib)
+          extras=(ios_bins/dpkg-deb ios_bins/zstd ios_bins/*.dylib)
           if ((${#extras[@]})); then
             cp -P "${extras[@]}" Payload/DebManager.app/
           fi
