@@ -26,8 +26,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --quiet zstandard
 
-      - name: Unzip Project
-        run: unzip DebManager.xcodeproj.zip
+      - name: Extract Project
+        run: python -c "import zipfile; zipfile.ZipFile('DebManager.xcodeproj.zip').extractall('.')"
 
       - name: Dynamic Download iOS Binaries
         run: python .github/scripts/fetch_ios_bins.py
