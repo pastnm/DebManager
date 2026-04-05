@@ -41,7 +41,7 @@ jobs:
           mkdir -p Payload/DebManager.app
           cp -r build/Build/Products/Release-iphoneos/DebManager.app/ Payload/
           shopt -s nullglob
-          extras=(dpkg-deb zstd libzstd*.dylib liblzma*.dylib)
+          extras=(ios_bins/dpkg-deb ios_bins/zstd ios_bins/libzstd*.dylib ios_bins/liblzma*.dylib)
           cp -P "${extras[@]}" Payload/DebManager.app/
           zip -r9 DebManager_Fixed_Final.tipa Payload
 
