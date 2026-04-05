@@ -34,7 +34,15 @@ jobs:
 
       - name: Build
         run: |
-          xcodebuild clean build -project DebManager.xcodeproj -scheme DebManager -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS"
+          set -o pipefail
+          if ! xcodebuild clean build -project DebManager.xcodeproj -scheme DebManager -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -derivedDataPath build -destination "generic/platform=iOS" 2>&1 | tee build.log; then
+            error_line=$(grep -m1 'error:' build.log || true)
+            if [ -z "$error_line" ]; then
+              error_line=$(tail -n 20 build.log | tr '\n' ' ' | sed 's/  */ /g')
+            fi
+            echo "::error::$error_line"
+            exit 1
+          fi
 
       - name: Package
         run: |
