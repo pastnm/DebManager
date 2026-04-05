@@ -10,6 +10,29 @@ extension UIApplication {
     }
 }
 
+final class DebDocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
+    static let shared = DebDocumentPresenter()
+    private var controller: UIDocumentInteractionController?
+
+    func present(url: URL) -> Bool {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap({ $0.windows })
+            .first(where: { $0.isKeyWindow }) else { return false }
+
+        let controller = UIDocumentInteractionController(url: url)
+        controller.delegate = self
+        self.controller = controller
+
+        let rect = CGRect(x: window.bounds.midX, y: window.bounds.maxY - 4, width: 1, height: 1)
+        return controller.presentOptionsMenu(from: rect, in: window, animated: true)
+    }
+
+    func documentInteractionControllerDidDismissOptionsMenu(_ controller: UIDocumentInteractionController) {
+        self.controller = nil
+    }
+}
+
 struct DownloadsView: View {
     @EnvironmentObject var downloadManager: DownloadManager
     @State private var showConvertSheet: DownloadedPackage?
@@ -156,8 +179,21 @@ struct DownloadsView: View {
         guard FileManager.default.fileExists(atPath: url.path) else {
             downloadManager.showToast("File not found"); return
         }
+
+        let sharedURL: URL
+        do {
+            sharedURL = try makeSharableCopy(of: url)
+        } catch {
+            downloadManager.showToast("share".localized + ": \(error.localizedDescription)")
+            return
+        }
+
         DispatchQueue.main.async {
-            let ac = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if DebDocumentPresenter.shared.present(url: sharedURL) {
+                return
+            }
+
+            let ac = UIActivityViewController(activityItems: [sharedURL], applicationActivities: nil)
             ac.excludedActivityTypes = [.airDrop, .addToReadingList, .assignToContact, .openInIBooks]
             if let w = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) {
                 ac.popoverPresentationController?.sourceView = w
@@ -166,6 +202,21 @@ struct DownloadsView: View {
             }
             UIApplication.shared.presentOnTop(ac)
         }
+    }
+
+    private func makeSharableCopy(of url: URL) throws -> URL {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("SharedDebs", isDirectory: true)
+        if !fm.fileExists(atPath: dir.path) {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+
+        let destination = dir.appendingPathComponent(url.lastPathComponent)
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.copyItem(at: url, to: destination)
+        return destination
     }
 }
 
