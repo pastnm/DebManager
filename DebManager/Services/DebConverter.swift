@@ -52,6 +52,9 @@ class DebConverter {
                 try performDiskPathMapping(in: ext, from: sourceArch, to: targetArch)
                 try updateControl(at: deb.appendingPathComponent("control"), from: sourceArch, to: targetArch)
                 try updateScripts(in: deb, from: sourceArch, to: targetArch)
+                if targetArch == .rootless, let offending = firstRoothideBinary(in: ext) {
+                    throw ConversionError.conversionFailed("binary still depends on roothide runtime: \(offending)")
+                }
                 signBins(in: ext); cleanDS(in: ext)
                 for c in ["-Zzstd", "-Zgzip", ""] {
                     let a = c.isEmpty ? ["-b", ext.path, outURL.path] : [c, "-b", ext.path, outURL.path]
@@ -98,6 +101,9 @@ class DebConverter {
                 : dataTar
             if to == .rootless && containsUnprefixedRootlessPaths(in: newDataTar) {
                 throw ConversionError.conversionFailed("rootless path remap incomplete")
+            }
+            if to == .rootless, let offending = firstRoothideBinary(inTar: newDataTar) {
+                throw ConversionError.conversionFailed("binary still depends on roothide runtime: \(offending)")
             }
             finalDataContent = makeStoredGzip(newDataTar)
             finalDataName = "data.tar.gz"
@@ -357,6 +363,77 @@ class DebConverter {
         }
 
         return false
+    }
+
+    private func firstRoothideBinary(in directory: URL) -> String? {
+        guard let enumerator = fm.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return nil
+        }
+
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                  values.isRegularFile == true,
+                  let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]),
+                  isMachO(data),
+                  containsRoothideRuntimeMarker(data) else {
+                continue
+            }
+
+            return fileURL.path.replacingOccurrences(of: directory.path + "/", with: "")
+        }
+
+        return nil
+    }
+
+    private func firstRoothideBinary(inTar tarData: Data) -> String? {
+        var off = 0
+
+        while off + 512 <= tarData.count {
+            if tarData[off..<off+512].allSatisfy({ $0 == 0 }) { break }
+            let path = readTarPath(from: tarData, at: off).replacingOccurrences(of: "./", with: "")
+            let szStr = readField(from: tarData, at: off + 124, length: 12)
+            let size = Int(szStr, radix: 8) ?? 0
+            let type = tarData[off + 156]
+
+            if (type == 0 || type == 0x30), size > 0 {
+                let dataStart = off + 512
+                if dataStart + size <= tarData.count {
+                    let fileData = Data(tarData[dataStart..<dataStart+size])
+                    if isMachO(fileData), containsRoothideRuntimeMarker(fileData) {
+                        return path
+                    }
+                }
+            }
+
+            off += 512
+            if size > 0 { off += ((size + 511) / 512) * 512 }
+        }
+
+        return nil
+    }
+
+    private func isMachO(_ data: Data) -> Bool {
+        guard data.count >= 4 else { return false }
+        let magic = data.withUnsafeBytes { $0.load(as: UInt32.self) }
+        switch magic {
+        case 0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE, 0xBEBAFECA:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func containsRoothideRuntimeMarker(_ data: Data) -> Bool {
+        let markers = [
+            "libroothide.dylib",
+            "@loader_path/.jbroot/usr/lib/libroothide.dylib",
+            "__Z6jbrootP8NSString",
+            "_jbroot"
+        ]
+
+        return markers.contains { marker in
+            data.range(of: Data(marker.utf8)) != nil
+        }
     }
 
     private func performDiskPathMapping(in dir: URL, from: ArchType, to: ArchType) throws {
