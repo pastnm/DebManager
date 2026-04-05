@@ -43,7 +43,7 @@ def parse_packages_index(contents: str) -> dict[str, str]:
             fields[key] = value
         name = fields.get("Package")
         path = fields.get("Filename")
-        if name in PACKAGES and path and name not in result:
+        if name in PACKAGES and path:
             result[name] = path
     return result
 
