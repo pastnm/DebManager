@@ -96,6 +96,9 @@ class DebConverter {
             let newDataTar = needsPathRemap
                 ? remapPathsInTar(tarData: dataTar, from: from, to: to)
                 : dataTar
+            if to == .rootless && containsUnprefixedRootlessPaths(in: newDataTar) {
+                throw ConversionError.conversionFailed("rootless path remap incomplete")
+            }
             finalDataContent = makeStoredGzip(newDataTar)
             finalDataName = "data.tar.gz"
         }
@@ -121,7 +124,7 @@ class DebConverter {
 
     private func remapPathsInTar(tarData: Data, from: ArchType, to: ArchType) -> Data {
         guard from != to else { return tarData }
-        guard from == .rootful || to == .rootful else { return tarData }
+        guard usesRootlessPrefix(from) != usesRootlessPrefix(to) else { return tarData }
 
         var result = Data(tarData)
         var off = 0
@@ -164,16 +167,6 @@ class DebConverter {
         if p.hasPrefix("./") { prefix = "./"; p = String(p.dropFirst(2)) }
 
         if !usesRootlessPrefix(from) && usesRootlessPrefix(to) {
-            if p.hasPrefix("Library/MobileSubstrate/DynamicLibraries/") {
-                let remainder = String(p.dropFirst("Library/MobileSubstrate/DynamicLibraries/".count))
-                return prefix + "var/jb/usr/lib/TweakInject/" + remainder
-            }
-            if p == "Library/MobileSubstrate/DynamicLibraries" {
-                return prefix + "var/jb/usr/lib/TweakInject"
-            }
-            if p == "Library/MobileSubstrate/" || p == "Library/MobileSubstrate" {
-                return prefix + "var/jb/Library/MobileSubstrate"
-            }
             let sysDirs = ["Library/", "usr/", "etc/", "Applications/", "System/", "bin/", "sbin/",
                            "Library", "usr", "etc", "Applications", "System", "bin", "sbin"]
             for sd in sysDirs {
@@ -341,19 +334,35 @@ class DebConverter {
         return nil
     }
 
+    private func containsUnprefixedRootlessPaths(in tarData: Data) -> Bool {
+        let sysPrefixes = ["Library/", "usr/", "etc/", "Applications/", "System/", "bin/", "sbin/"]
+        let sysExact = Set(["Library", "usr", "etc", "Applications", "System", "bin", "sbin"])
+        var off = 0
+
+        while off + 512 <= tarData.count {
+            if tarData[off..<off+512].allSatisfy({ $0 == 0 }) { break }
+            let path = readTarPath(from: tarData, at: off)
+                .replacingOccurrences(of: "./", with: "")
+            let szStr = readField(from: tarData, at: off + 124, length: 12)
+            let size = Int(szStr, radix: 8) ?? 0
+
+            if !path.isEmpty, !path.hasPrefix("var/jb/") {
+                if sysExact.contains(path) || sysPrefixes.contains(where: { path.hasPrefix($0) }) {
+                    return true
+                }
+            }
+
+            off += 512
+            if size > 0 { off += ((size + 511) / 512) * 512 }
+        }
+
+        return false
+    }
+
     private func performDiskPathMapping(in dir: URL, from: ArchType, to: ArchType) throws {
-        switch (from, to) {
-        case (.rootful, .rootless), (.roothide, .rootless):
+        if !usesRootlessPrefix(from) && usesRootlessPrefix(to) {
             let jb = dir.appendingPathComponent("var/jb")
             try fm.createDirectory(at: jb, withIntermediateDirectories: true)
-            let ms = dir.appendingPathComponent("Library/MobileSubstrate/DynamicLibraries")
-            if fm.fileExists(atPath: ms.path) {
-                let ti = jb.appendingPathComponent("usr/lib/TweakInject")
-                try fm.createDirectory(at: ti.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try fm.moveItem(at: ms, to: ti)
-                let p = dir.appendingPathComponent("Library/MobileSubstrate")
-                if isDirEmpty(p) { try? fm.removeItem(at: p) }
-            }
             for d in ["Library","usr","etc","Applications","System","bin","sbin"] {
                 let s = dir.appendingPathComponent(d)
                 guard fm.fileExists(atPath: s.path) else { continue }
@@ -361,9 +370,12 @@ class DebConverter {
                 if fm.fileExists(atPath: dst.path) { try mergeDir(s, dst); try? fm.removeItem(at: s) }
                 else { try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true); try fm.moveItem(at: s, to: dst) }
             }
-        case (.rootless, .rootful), (.rootless, .roothide):
+            return
+        }
+
+        if usesRootlessPrefix(from) && !usesRootlessPrefix(to) {
             let jb = dir.appendingPathComponent("var/jb")
-            guard fm.fileExists(atPath: jb.path) else { break }
+            guard fm.fileExists(atPath: jb.path) else { return }
             let ti = jb.appendingPathComponent("usr/lib/TweakInject")
             if fm.fileExists(atPath: ti.path) {
                 let ms = dir.appendingPathComponent("Library/MobileSubstrate/DynamicLibraries")
@@ -377,7 +389,6 @@ class DebConverter {
             }
             try? fm.removeItem(at: jb)
             if isDirEmpty(dir.appendingPathComponent("var")) { try? fm.removeItem(at: dir.appendingPathComponent("var")) }
-        default: break
         }
     }
 
