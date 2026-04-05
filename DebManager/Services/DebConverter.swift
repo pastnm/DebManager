@@ -455,10 +455,10 @@ class DebConverter {
 
     private func findBin(_ name: String) -> String? {
         // 优先在 App 内部 Bundle 路径查找注入的二进制工具
-        let bundlePath = Bundle.main.bundlePath + "/\(name)"
+        let bundleToolPath = Bundle.main.bundlePath + "/\(name)"
         
         var paths = [
-            bundlePath,
+            bundleToolPath,
             "/var/jb/usr/bin/\(name)",
             "/usr/bin/\(name)",
             "/usr/local/bin/\(name)",
@@ -524,43 +524,18 @@ class DebConverter {
     }
 
     private func makeEnv(for executablePath: String) -> [String] {
-        let env = ProcessInfo.processInfo.environment
-        let bundlePath = Bundle.main.bundlePath
-        let execDir = URL(fileURLWithPath: executablePath).deletingLastPathComponent().path
-        let useBundleRuntime = executablePath.hasPrefix(bundlePath)
-        let pathSeed = [
-            useBundleRuntime ? bundlePath : nil,
-            execDir,
-            env["PATH"],
-            "/usr/bin:/var/jb/usr/bin:/bin:/sbin"
-        ]
-        let pathParts = pathSeed.compactMap { value in
-            guard let value, !value.isEmpty else { return nil }
-            return value
-        }
-        var result = [
-            "PATH=\(pathParts.joined(separator: ":"))",
+        var env = [
+            "PATH=/usr/bin:/var/jb/usr/bin:/bin:/sbin",
             "TMPDIR=\(fm.temporaryDirectory.path)"
         ]
-        if useBundleRuntime {
-            let librarySeed = [
-                bundlePath,
-                execDir,
-                env["DYLD_LIBRARY_PATH"],
-                env["DYLD_FALLBACK_LIBRARY_PATH"]
-            ]
-            let libraryParts = librarySeed.compactMap { value in
-                guard let value, !value.isEmpty else { return nil }
-                return value
-            }
-            if !libraryParts.isEmpty {
-                let libPath = libraryParts.joined(separator: ":")
-                result.append("DYLD_LIBRARY_PATH=\(libPath)")
-                result.append("DYLD_FALLBACK_LIBRARY_PATH=\(libPath)")
-            }
+        let bundlePath = Bundle.main.bundlePath
+        if executablePath.hasPrefix(bundlePath) {
+            let execDir = URL(fileURLWithPath: executablePath).deletingLastPathComponent().path
+            let libraryPath = "\(bundlePath):\(execDir)"
+            env.append("DYLD_LIBRARY_PATH=\(libraryPath)")
+            env.append("DYLD_FALLBACK_LIBRARY_PATH=\(libraryPath)")
         }
-        if let home = env["HOME"], !home.isEmpty { result.append("HOME=\(home)") }
-        return result
+        return env
     }
 
     private func ensureExecutable(_ path: String) {
