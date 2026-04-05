@@ -6,82 +6,31 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set Up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --quiet zstandard
 
       - name: Unzip Project
         run: unzip DebManager.xcodeproj.zip
 
       - name: Dynamic Download iOS Binaries
-        run: |
-          mkdir -p ios_bins
-          cd ios_bins
-
-          BASE_URL="https://strap.palera.in"
-          REPO_PATH="$BASE_URL/dists/iphoneos-arm64/1900/main/binary-iphoneos-arm"
-
-          curl -fsSL "$REPO_PATH/Packages" -o Packages
-
-          get_path() {
-            awk -v pkg="$1" '
-              $0 == "Package: " pkg { found = 1; next }
-              found && /^Filename: / { print substr($0, 11); exit }
-              found && /^Package: / { found = 0 }
-            ' Packages
-          }
-
-          download_package() {
-            local pkg="$1"
-            local path
-            path="$(get_path "$pkg")"
-
-            if [ -z "$path" ]; then
-              echo "Failed to resolve package path for $pkg"
-              exit 1
-            fi
-
-            curl -fsSLo "${pkg}.deb" "$BASE_URL/$path"
-          }
-
-          for pkg in dpkg zstd libzstd1 liblzma5; do
-            download_package "$pkg"
-          done
-
-          python3 -m pip install --quiet zstandard
-
-          mkdir -p extracted
-          for f in *.deb; do
-            pkg_dir="extracted/${f%.deb}"
-            mkdir -p "$pkg_dir"
-
-            (
-              cd "$pkg_dir"
-              tar -xf "../../$f"
-
-              if [ -f data.tar.zst ]; then
-                python3 -c "import zstandard as zstd; src=open('data.tar.zst','rb'); dst=open('data.tar','wb'); zstd.ZstdDecompressor().copy_stream(src, dst); src.close(); dst.close()"
-                tar -xf data.tar
-              elif [ -f data.tar.xz ] || [ -f data.tar.gz ] || [ -f data.tar ]; then
-                set -- data.tar.*
-                tar -xf "$1"
-              else
-                echo "Missing data archive in $f"
-                exit 1
-              fi
-            )
-          done
-
-          cp -P extracted/*/usr/bin/dpkg-deb ../
-          cp -P extracted/*/usr/bin/zstd ../
-          cp -P extracted/*/usr/lib/libzstd*.dylib ../
-          cp -P extracted/*/usr/lib/liblzma*.dylib ../
-          cd ..
-
-          ls -l dpkg-deb zstd libzstd*.dylib liblzma*.dylib
+        run: python .github/scripts/fetch_ios_bins.py
 
       - name: Build
         run: |
