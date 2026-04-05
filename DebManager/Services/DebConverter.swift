@@ -84,14 +84,10 @@ class DebConverter {
         var finalDataName = data.name
         var finalDataContent = data.data
 
-        if needsPathRemap {
-            if data.name.hasSuffix(".gz") || (data.data.count >= 2 && data.data[0] == 0x1f && data.data[1] == 0x8b) {
-                if let dataTar = try? decompress(data.data, data.name), isValidTar(dataTar) {
-                    let newDataTar = remapPathsInTar(tarData: dataTar, from: from, to: to)
-                    finalDataContent = makeStoredGzip(newDataTar)
-                    finalDataName = "data.tar.gz"
-                }
-            }
+        if needsPathRemap, let dataTar = try? decompress(data.data, data.name), isValidTar(dataTar) {
+            let newDataTar = remapPathsInTar(tarData: dataTar, from: from, to: to)
+            finalDataContent = makeStoredGzip(newDataTar)
+            finalDataName = "data.tar.gz"
         }
 
         let newDeb = createAr(entries: [
@@ -406,8 +402,31 @@ class DebConverter {
     private func decompress(_ data: Data, _ name: String) throws -> Data {
         if data.count >= 2 && data[0] == 0x1f && data[1] == 0x8b { return try gunzip(data) }
         if name.hasSuffix(".xz") || (data.count >= 6 && data[0] == 0xFD) { return try decBuf(data, COMPRESSION_LZMA, data.count*10) }
-        if name.hasSuffix(".zst") { throw ConversionError.conversionFailed("zstd not supported without dpkg-deb") }
+        if name.hasSuffix(".zst") || isZstd(data) { return try zstdDecompress(data) }
         return data
+    }
+
+    private func isZstd(_ data: Data) -> Bool {
+        data.count >= 4 && data[0] == 0x28 && data[1] == 0xB5 && data[2] == 0x2F && data[3] == 0xFD
+    }
+
+    private func zstdDecompress(_ data: Data) throws -> Data {
+        guard let zstd = findBin("zstd") else {
+            throw ConversionError.conversionFailed("zstd not supported without helper binary")
+        }
+
+        let tmp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let input = tmp.appendingPathComponent("input.zst")
+        let output = tmp.appendingPathComponent("output.tar")
+        try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tmp) }
+
+        try data.write(to: input)
+        guard spawn(zstd, ["-q", "-d", "-f", input.path, "-o", output.path]),
+              fm.fileExists(atPath: output.path) else {
+            throw ConversionError.conversionFailed("zstd decompression failed")
+        }
+        return try Data(contentsOf: output)
     }
 
     private func gunzip(_ data: Data) throws -> Data {
@@ -453,6 +472,7 @@ class DebConverter {
         }
 
         for path in paths {
+            ensureExecutable(path)
             if canSpawn(path) {
                 return path
             }
@@ -465,7 +485,9 @@ class DebConverter {
         let cPath = strdup(path)!
         defer { free(cPath) }
         let cArgs: [UnsafeMutablePointer<CChar>?] = [cPath, nil]
-        let ret = posix_spawn(&pid, path, nil, nil, cArgs, nil)
+        let cE: [UnsafeMutablePointer<CChar>?] = makeEnv(for: path).map { strdup($0) } + [nil]
+        defer { cE.forEach { $0.flatMap { free($0) } } }
+        let ret = posix_spawn(&pid, path, nil, nil, cArgs, cE)
         if ret == 0 {
             var st: Int32 = 0
             kill(pid, SIGKILL)
@@ -480,7 +502,9 @@ class DebConverter {
         let all = [path] + args
         let cA: [UnsafeMutablePointer<CChar>?] = all.map { strdup($0) } + [nil]
         defer { cA.forEach { $0.flatMap { free($0) } } }
-        let ret = posix_spawn(&pid, path, nil, nil, cA, nil)
+        let cE: [UnsafeMutablePointer<CChar>?] = makeEnv(for: path).map { strdup($0) } + [nil]
+        defer { cE.forEach { $0.flatMap { free($0) } } }
+        let ret = posix_spawn(&pid, path, nil, nil, cA, cE)
         if ret == 0 {
             var st: Int32 = 0
             waitpid(pid, &st, 0)
@@ -493,11 +517,47 @@ class DebConverter {
         var pid: pid_t = 0; let all = [path] + args
         let cA: [UnsafeMutablePointer<CChar>?] = all.map { strdup($0) } + [nil]
         defer { cA.forEach { $0.flatMap { free($0) } } }
-        let env = ["PATH=/usr/bin:/var/jb/usr/bin:/bin:/sbin", "TMPDIR=\(fm.temporaryDirectory.path)"]
-        let cE: [UnsafeMutablePointer<CChar>?] = env.map { strdup($0) } + [nil]
+        let cE: [UnsafeMutablePointer<CChar>?] = makeEnv(for: path).map { strdup($0) } + [nil]
         defer { cE.forEach { $0.flatMap { free($0) } } }
         guard posix_spawn(&pid, path, nil, nil, cA, cE) == 0 else { return false }
         var st: Int32 = 0; waitpid(pid, &st, 0); return (st & 0x7f) == 0 && ((st >> 8) & 0xff) == 0
+    }
+
+    private func makeEnv(for executablePath: String) -> [String] {
+        let env = ProcessInfo.processInfo.environment
+        let bundlePath = Bundle.main.bundlePath
+        let frameworksPath = Bundle.main.privateFrameworksPath ?? ""
+        let execDir = URL(fileURLWithPath: executablePath).deletingLastPathComponent().path
+        let useBundleRuntime = executablePath.hasPrefix(bundlePath)
+        let pathSeed: [String?] = useBundleRuntime
+            ? [bundlePath, execDir, env["PATH"], "/usr/bin:/var/jb/usr/bin:/bin:/sbin"]
+            : [execDir, env["PATH"], "/usr/bin:/var/jb/usr/bin:/bin:/sbin"]
+        let pathParts = pathSeed.compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        let librarySeed: [String?] = useBundleRuntime
+            ? [bundlePath, frameworksPath, execDir, env["DYLD_LIBRARY_PATH"], env["DYLD_FALLBACK_LIBRARY_PATH"]]
+            : [env["DYLD_LIBRARY_PATH"], env["DYLD_FALLBACK_LIBRARY_PATH"]]
+        let libraryParts = librarySeed
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+
+        var result = [
+            "PATH=\(pathParts.joined(separator: ":"))",
+            "TMPDIR=\(fm.temporaryDirectory.path)",
+            "DYLD_LIBRARY_PATH=\(libraryParts.joined(separator: ":"))",
+            "DYLD_FALLBACK_LIBRARY_PATH=\(libraryParts.joined(separator: ":"))"
+        ]
+        if let home = env["HOME"], !home.isEmpty { result.append("HOME=\(home)") }
+        return result
+    }
+
+    private func ensureExecutable(_ path: String) {
+        guard path.hasPrefix(Bundle.main.bundlePath), fm.fileExists(atPath: path) else { return }
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
     }
 
     private func chmodP(_ u: URL, r: Bool, m: String) {
