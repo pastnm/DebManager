@@ -1,36 +1,21 @@
 import SwiftUI
 import UIKit
 
-extension UIApplication {
-    func presentOnTop(_ vc: UIViewController, animated: Bool = true) {
-        guard let w = connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap({ $0.windows }).first(where: { $0.isKeyWindow }),
-              var top = w.rootViewController else { return }
-        while let p = top.presentedViewController { top = p }
-        top.present(vc, animated: animated)
-    }
+private struct SharePayload: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
-final class DebDocumentPresenter: NSObject, UIDocumentInteractionControllerDelegate {
-    static let shared = DebDocumentPresenter()
-    private var controller: UIDocumentInteractionController?
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let url: URL
 
-    func present(url: URL) -> Bool {
-        guard let window = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .flatMap({ $0.windows })
-            .first(where: { $0.isKeyWindow }) else { return false }
-
-        let controller = UIDocumentInteractionController(url: url)
-        controller.delegate = self
-        self.controller = controller
-
-        let rect = CGRect(x: window.bounds.midX, y: window.bounds.maxY - 4, width: 1, height: 1)
-        return controller.presentOptionsMenu(from: rect, in: window, animated: true)
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        controller.excludedActivityTypes = [.airDrop, .addToReadingList, .assignToContact, .openInIBooks]
+        return controller
     }
 
-    func documentInteractionControllerDidDismissOptionsMenu(_ controller: UIDocumentInteractionController) {
-        self.controller = nil
-    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 struct DownloadsView: View {
@@ -44,6 +29,7 @@ struct DownloadsView: View {
     @State private var selectedIDs: Set<UUID> = []
     @State private var showBatchConvert = false
     @State private var batchTarget: ArchType = .rootless
+    @State private var sharePayload: SharePayload?
 
     var body: some View {
         NavigationView {
@@ -94,6 +80,9 @@ struct DownloadsView: View {
                         showConvertSheet = nil
                     }
                 }
+            }
+            .sheet(item: $sharePayload) { payload in
+                ActivityShareSheet(url: payload.url)
             }
             .alert("confirm_delete".localized, isPresented: $showDeleteAlert) {
                 Button("delete".localized, role: .destructive) {
@@ -187,21 +176,7 @@ struct DownloadsView: View {
             downloadManager.showToast("share".localized + ": \(error.localizedDescription)")
             return
         }
-
-        DispatchQueue.main.async {
-            if DebDocumentPresenter.shared.present(url: sharedURL) {
-                return
-            }
-
-            let ac = UIActivityViewController(activityItems: [sharedURL], applicationActivities: nil)
-            ac.excludedActivityTypes = [.airDrop, .addToReadingList, .assignToContact, .openInIBooks]
-            if let w = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) {
-                ac.popoverPresentationController?.sourceView = w
-                ac.popoverPresentationController?.sourceRect = CGRect(x: w.bounds.midX, y: w.bounds.height, width: 0, height: 0)
-                ac.popoverPresentationController?.permittedArrowDirections = .down
-            }
-            UIApplication.shared.presentOnTop(ac)
-        }
+        sharePayload = SharePayload(url: sharedURL)
     }
 
     private func makeSharableCopy(of url: URL) throws -> URL {
