@@ -63,12 +63,7 @@ jobs:
               tar -xf "../../$f"
 
               if [ -f data.tar.zst ]; then
-                cat <<'PY' | python3 -
-import zstandard as zstd
-
-with open("data.tar.zst", "rb") as src, open("data.tar", "wb") as dst:
-    zstd.ZstdDecompressor().copy_stream(src, dst)
-PY
+                python3 -c "import zstandard as zstd; src=open('data.tar.zst','rb'); dst=open('data.tar','wb'); zstd.ZstdDecompressor().copy_stream(src, dst); src.close(); dst.close()"
                 tar -xf data.tar
               elif [ -f data.tar.xz ] || [ -f data.tar.gz ] || [ -f data.tar ]; then
                 set -- data.tar.*
