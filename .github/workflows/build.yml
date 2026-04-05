@@ -56,21 +56,21 @@ jobs:
             (
               cd "$pkg_dir"
               ar x "../../$f"
-              data_archive="$(find . -maxdepth 1 -name 'data.tar.*' | head -n 1)"
+              set -- data.tar.*
 
-              if [ -z "$data_archive" ]; then
+              if [ "$1" = "data.tar.*" ]; then
                 echo "Missing data archive in $f"
                 exit 1
               fi
 
-              tar -xf "$data_archive"
+              tar -xf "$1"
             )
           done
 
-          cp -a extracted/*/usr/bin/dpkg-deb ../
-          cp -a extracted/*/usr/bin/zstd ../
-          cp -a extracted/*/usr/lib/libzstd*.dylib ../
-          cp -a extracted/*/usr/lib/liblzma*.dylib ../
+          cp -P extracted/*/usr/bin/dpkg-deb ../
+          cp -P extracted/*/usr/bin/zstd ../
+          cp -P extracted/*/usr/lib/libzstd*.dylib ../
+          cp -P extracted/*/usr/lib/liblzma*.dylib ../
           cd ..
 
           ls -l dpkg-deb zstd libzstd*.dylib liblzma*.dylib
